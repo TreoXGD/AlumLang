@@ -7,7 +7,14 @@ const tok = @import("./token.zig");
 const Token = tok.Token;
 const OpType = tok.OpType;
 
-pub const LexError = error{ NotKeyword, UnsupportedCharacter, Overflow, DecimalPointWithoutNumber } || Allocator.Error;
+pub const LexError = error{
+    NotKeyword,
+    UnsupportedCharacter,
+    Overflow,
+    DecimalPointWithoutNumber,
+    GetVarWithoutValidVar,
+    SetVarWithoutValidVar,
+} || Allocator.Error;
 
 pub const TokenList = Aligned(Token, null);
 
@@ -19,7 +26,8 @@ pub const Lexer = struct {
     const LexState = enum {
         start,
         num,
-        ident,
+        ident_op,
+        get_or_set_var,
         op,
         end,
     };
@@ -38,7 +46,7 @@ pub const Lexer = struct {
                     },
                     '+', '*', '/', '%' => continue :state .op,
                     '-' => {
-                        if (std.ascii.isDigit(self.peekAt(0))) continue :state .num;
+                        if (!self.isAtEnd() and std.ascii.isDigit(self.peekAt(0))) continue :state .num;
 
                         continue :state .op;
                     },
@@ -46,8 +54,16 @@ pub const Lexer = struct {
                         while (!self.isAtEnd() and self.peekAt(0) != '\n') self.index += 1;
                         continue :state .start;
                     },
+                    '@' => {
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.GetVarWithoutValidVar;
+                        continue :state .get_or_set_var;
+                    },
+                    '$' => {
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.SetVarWithoutValidVar;
+                        continue :state .get_or_set_var;
+                    },
                     ' ', '\t', '\r', '\n' => continue :state .start,
-                    'a'...'z' => continue :state .ident,
+                    'a'...'z' => continue :state .ident_op,
                     else => return LexError.UnsupportedCharacter,
                 }
             },
@@ -94,7 +110,7 @@ pub const Lexer = struct {
 
                 continue :state .start;
             },
-            .ident => {
+            .ident_op => {
                 const start_index = self.index - 1;
                 while (!self.isAtEnd() and std.ascii.isAlphabetic(self.peekAt(0))) {
                     self.index += 1;
@@ -104,6 +120,21 @@ pub const Lexer = struct {
                 const keyword = try strToKeyword(text[start_index..self.index]);
 
                 try token_list.append(self.arena, keyword);
+
+                continue :state .start;
+            },
+            .get_or_set_var => {
+                const start_index = self.index;
+                while (!self.isAtEnd() and std.ascii.isAlphabetic(self.text[self.index])) self.index += 1;
+
+                const ident = try self.arena.dupe(u8, self.text[start_index..self.index]);
+                const token: Token = switch (self.text[start_index - 1]) {
+                    '@' => .{ .get_var = ident },
+                    '$' => .{ .set_var = ident },
+                    else => unreachable,
+                };
+
+                try token_list.append(self.arena, token);
 
                 continue :state .start;
             },
@@ -136,7 +167,7 @@ pub const Lexer = struct {
     }
 };
 
-test "lexer (numbers and add keyword)" {
+test "numbers and add keyword" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("3 4 +");
     defer token_list.deinit(std.testing.allocator);
@@ -147,7 +178,7 @@ test "lexer (numbers and add keyword)" {
     try std.testing.expectEqual(Token{ .op = .plus }, token_list.items[2]);
 }
 
-test "lexer (comment with no trailing newline doesn't run off the buffer)" {
+test "comment with no trailing newline doesn't run off the buffer" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("-5 ; rest is ignored");
     defer token_list.deinit(std.testing.allocator);
@@ -156,14 +187,14 @@ test "lexer (comment with no trailing newline doesn't run off the buffer)" {
     try std.testing.expectEqual(Token{ .int = -5 }, token_list.items[0]);
 }
 
-test "lexer (errors on bad input)" {
+test "errors on bad input" {
     var lexer = Lexer{ .arena = std.testing.allocator };
 
-    try std.testing.expectError(LexError.UnsupportedCharacter, lexer.lex("$"));
+    try std.testing.expectError(LexError.UnsupportedCharacter, lexer.lex("?"));
     try std.testing.expectError(LexError.NotKeyword, lexer.lex("foo"));
 }
 
-test "lexer (float literal)" {
+test "float literal" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("2.5");
     defer token_list.deinit(std.testing.allocator);
@@ -172,7 +203,7 @@ test "lexer (float literal)" {
     try std.testing.expectEqual(Token{ .float = 2.5 }, token_list.items[0]);
 }
 
-test "lexer (negative float literal)" {
+test "negative float literal" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("-2.5");
     defer token_list.deinit(std.testing.allocator);
@@ -181,7 +212,7 @@ test "lexer (negative float literal)" {
     try std.testing.expectEqual(Token{ .float = -2.5 }, token_list.items[0]);
 }
 
-test "lexer (mixed int and float)" {
+test "mixed int and float" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("3 4.5 +");
     defer token_list.deinit(std.testing.allocator);
@@ -192,8 +223,49 @@ test "lexer (mixed int and float)" {
     try std.testing.expectEqual(Token{ .op = .plus }, token_list.items[2]);
 }
 
-test "lexer (errors on decimal point without digits)" {
+test "error on decimal point without digits" {
     var lexer = Lexer{ .arena = std.testing.allocator };
 
     try std.testing.expectError(LexError.DecimalPointWithoutNumber, lexer.lex("3."));
+}
+
+test "error on set variable without identifier" {
+    var lexer = Lexer{ .arena = std.testing.allocator };
+
+    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$"));
+}
+
+test "error on set variable with non-identifier" {
+    var lexer = Lexer{ .arena = std.testing.allocator };
+
+    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$-"));
+}
+
+test "error on get variable without identifier" {
+    var lexer = Lexer{ .arena = std.testing.allocator };
+
+    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@"));
+}
+
+test "error on get variable with non-identifier" {
+    var lexer = Lexer{ .arena = std.testing.allocator };
+
+    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@+"));
+}
+
+test "set var and get var operations" {
+    var arena_instance = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_instance.deinit();
+    var lexer = Lexer{ .arena = arena_instance.allocator() };
+
+    const token_list = try lexer.lex("5 $x @x");
+
+    try std.testing.expectEqual(3, token_list.items.len);
+    try std.testing.expectEqual(Token{ .int = 5 }, token_list.items[0]);
+
+    try std.testing.expect(token_list.items[1] == .set_var);
+    try std.testing.expectEqualStrings("x", token_list.items[1].set_var);
+
+    try std.testing.expect(token_list.items[2] == .get_var);
+    try std.testing.expectEqualStrings("x", token_list.items[2].get_var);
 }

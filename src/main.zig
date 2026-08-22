@@ -44,13 +44,15 @@ fn repl(init: std.process.Init) !void {
                 LexError.Overflow => stderr.writeAll("The number was too big to store.\n"),
                 LexError.OutOfMemory => stderr.writeAll("The token list ran out of memory.\n"),
                 LexError.DecimalPointWithoutNumber => stderr.writeAll("The floating number must have at least 1 number after '.'\n"),
+                LexError.GetVarWithoutValidVar => stderr.writeAll("The '@' symbol should have at least one alphabetic character.\n"),
+                LexError.SetVarWithoutValidVar => stderr.writeAll("The '$' symbol should have at least one alphabetic character.\n"),
             };
             try stderr.flush();
             continue :loop;
         };
         defer token_list.deinit(arena);
 
-        std.debug.print("{any}\n", .{token_list.items});
+        // std.debug.print("{any}\n", .{token_list.items});
         // evaluating
         for (token_list.items) |token| {
             interpreter.eval(token) catch |err| {
@@ -62,6 +64,8 @@ fn repl(init: std.process.Init) !void {
                     EvalError.ArithmeticWithNoNumber => stderr.writeAll("Unable to use arithmetic commands with non-number arguments.\n"),
                     EvalError.OverflowOnCommand => stderr.writeAll("Number overflowed on command.\n"),
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
+                    EvalError.AlreadyDefinedVariable => stderr.writeAll("There is already a variable defined with that name.\n"),
+                    EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
                     EvalError.Quit => break :loop,
                 };
                 try stderr.flush();

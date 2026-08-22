@@ -18,6 +18,7 @@ pub const OpType = enum {
     print,
     peek,
     stack,
+    vars,
     quit,
     help,
 };
@@ -27,4 +28,6 @@ pub const Token = union(enum) {
     float: f64,
     bool: bool,
     op: OpType,
+    set_var: []const u8,
+    get_var: []const u8,
 };

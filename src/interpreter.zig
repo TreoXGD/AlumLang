@@ -14,6 +14,8 @@ pub const EvalError = error{
     ArithmeticWithNoNumber,
     OverflowOnCommand,
     InvalidFloat,
+    AlreadyDefinedVariable,
+    UndefinedVariable,
     Quit,
 } || Allocator.Error;
 
@@ -37,6 +39,7 @@ pub const Interpreter = struct {
     arena: Allocator,
     writer: *std.Io.Writer,
     stack: Stack = .empty,
+    var_dict: std.array_hash_map.String(Value) = .empty,
 
     pub fn init(arena: Allocator, writer: *std.Io.Writer) Interpreter {
         return .{
@@ -50,6 +53,15 @@ pub const Interpreter = struct {
             .int => |i| try self.stack.append(self.arena, .{ .int = i }),
             .float => |f| try self.stack.append(self.arena, .{ .float = f }),
             .bool => |b| try self.stack.append(self.arena, .{ .bool = b }),
+            .set_var => |ident| {
+                const value = try self.popOrError();
+                try self.var_dict.put(self.arena, ident, value);
+            },
+            .get_var => |ident| {
+                if (self.var_dict.get(ident)) |value| {
+                    try self.stack.append(self.arena, value);
+                } else return EvalError.UndefinedVariable;
+            },
             .op => |op| {
                 switch (op) {
                     // binary arithmetic operations
@@ -112,6 +124,16 @@ pub const Interpreter = struct {
                             while (i > 0) : (i -= 1) try self.writer.print("| {f}\n", .{self.stack.items[i - 1]});
                         }
                     },
+                    .vars => {
+                        if (self.var_dict.count() == 0) {
+                            try self.writer.writeAll("||\n");
+                        } else {
+                            var iter = self.var_dict.iterator();
+                            while (iter.next()) |entry| {
+                                try self.writer.print("|| {s} = {f}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+                            }
+                        }
+                    },
                     .quit => return EvalError.Quit,
                     .help => {
                         const help_commands =
@@ -120,6 +142,8 @@ pub const Interpreter = struct {
                             \\* - pops 2, pushes their product
                             \\/ - pops 2, pushes their second-from-top over top and errors if top is 0
                             \\% - pops 2, pushes remainder of second-from-top over top and errors if top is 0
+                            \\$(ident) - pops 1, defines a variable with popped value and (ident) name
+                            \\@(ident) - pushes value of defined (ident) variable onto the stack
                             \\neg - pops 1, pushes its negations
                             \\abs - pops 1, pushes its absolute value
                             \\min - pops 2, pushes smaller value
@@ -133,12 +157,12 @@ pub const Interpreter = struct {
                             \\print - pops and prints the top
                             \\peek - prints the top without popping
                             \\stack - prints the entire stack top to bottom without popping
+                            \\vars - prints the entire list of defined variables
                             \\quit - exit the program
                             \\help - shows this message
                         ;
 
-                        try self.writer.writeAll(help_commands);
-                        try self.writer.writeAll("\n");
+                        try self.writer.writeAll(help_commands ++ "\n");
                     },
                 }
             },
@@ -662,4 +686,115 @@ test "arithmetic errors on non-numeric value" {
     try interp.stack.append(interp.arena, .{ .int = 1 });
 
     try std.testing.expectError(EvalError.ArithmeticWithNoNumber, interp.eval(.{ .op = .plus }));
+}
+
+test "set var and get var operations" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .set_var = "x" });
+    try interp.eval(.{ .get_var = "x" });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+}
+
+test "get var errors on undefined variable" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try std.testing.expectError(EvalError.UndefinedVariable, interp.eval(.{ .get_var = "x" }));
+}
+
+test "set var errors on empty stack" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try std.testing.expectError(EvalError.StackUnderflow, interp.eval(.{ .set_var = "x" }));
+}
+
+test "set var overwrites an existing variable" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 1 });
+    try interp.eval(.{ .set_var = "x" });
+    try interp.eval(.{ .int = 2 });
+    try interp.eval(.{ .set_var = "x" });
+    try interp.eval(.{ .get_var = "x" });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
+}
+
+test "variables persist independently of the stack" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .set_var = "x" });
+    try interp.eval(.{ .int = 10 });
+    try interp.eval(.{ .int = 20 });
+    try interp.eval(.{ .op = .plus });
+    try interp.eval(.{ .get_var = "x" });
+
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 30 }, .{ .int = 5 } }, interp.stack.items);
+}
+
+test "vars operation lists defined variables" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 1 });
+    try interp.eval(.{ .set_var = "x" });
+    try interp.eval(.{ .int = 2 });
+    try interp.eval(.{ .set_var = "y" });
+    try interp.eval(.{ .op = .vars });
+
+    try std.testing.expectEqualStrings("|| x = 1\n|| y = 2\n", w.buffer[0..w.end]);
+}
+
+test "vars operation with none defined" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .op = .vars });
+
+    try std.testing.expectEqualStrings("||\n", w.buffer[0..w.end]);
+}
+
+test "variable name matching a keyword doesn't collide with it" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 99 });
+    try interp.eval(.{ .set_var = "dup" });
+    try interp.eval(.{ .int = 7 });
+    try interp.eval(.{ .op = .dup });
+    try interp.eval(.{ .get_var = "dup" });
+
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 }, .{ .int = 99 } }, interp.stack.items);
 }
