@@ -64,7 +64,6 @@ fn repl(init: std.process.Init) !void {
                     EvalError.ArithmeticWithNoNumber => stderr.writeAll("Unable to use arithmetic commands with non-number arguments.\n"),
                     EvalError.OverflowOnCommand => stderr.writeAll("Number overflowed on command.\n"),
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
-                    EvalError.AlreadyDefinedVariable => stderr.writeAll("There is already a variable defined with that name.\n"),
                     EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
                     EvalError.Quit => break :loop,
                 };

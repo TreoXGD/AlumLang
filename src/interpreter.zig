@@ -14,7 +14,6 @@ pub const EvalError = error{
     ArithmeticWithNoNumber,
     OverflowOnCommand,
     InvalidFloat,
-    AlreadyDefinedVariable,
     UndefinedVariable,
     Quit,
 } || Allocator.Error;
