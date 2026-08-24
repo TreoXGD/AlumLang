@@ -179,7 +179,7 @@ pub const Lexer = struct {
     }
 };
 
-test "numbers and add keyword" {
+test "numbers and plus operator" {
     var lexer = Lexer{ .arena = std.testing.allocator };
     var token_list = try lexer.lex("3 4 +");
     defer token_list.deinit(std.testing.allocator);
@@ -242,27 +242,17 @@ test "error on decimal point without digits" {
     try std.testing.expectError(LexError.DecimalPointWithoutNumber, lexer.lex("3."));
 }
 
-test "error on set variable without identifier" {
+test "error on set variable without proper identifier" {
     var lexer = Lexer{ .arena = std.testing.allocator };
 
     try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$"));
-}
-
-test "error on set variable with non-identifier" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-
     try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$-"));
 }
 
-test "error on get variable without identifier" {
+test "error on get variable without proper identifier" {
     var lexer = Lexer{ .arena = std.testing.allocator };
 
     try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@"));
-}
-
-test "error on get variable with non-identifier" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-
     try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@+"));
 }
 
@@ -283,58 +273,34 @@ test "set var and get var operations" {
     try std.testing.expectEqualStrings("x", token_list.items[2].get_var);
 }
 
-test "less than operator" {
+test "less than and less than or equal operators" {
     var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("<");
+    var token_list = try lexer.lex("< <=");
     defer token_list.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(1, token_list.items.len);
+    try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .less }, token_list.items[0]);
+    try std.testing.expectEqual(Token{ .op = .less_equal }, token_list.items[1]);
 }
 
-test "less than or equal operator" {
+test "greater than and greater than or equal operators" {
     var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("<=");
+    var token_list = try lexer.lex("> >=");
     defer token_list.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(1, token_list.items.len);
-    try std.testing.expectEqual(Token{ .op = .less_equal }, token_list.items[0]);
-}
-
-test "greater than operator" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex(">");
-    defer token_list.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(1, token_list.items.len);
+    try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .greater }, token_list.items[0]);
+    try std.testing.expectEqual(Token{ .op = .greater_equal }, token_list.items[1]);
 }
 
-test "greater than or equal operator" {
+test "equal and not equal operators" {
     var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex(">=");
+    var token_list = try lexer.lex("== !=");
     defer token_list.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(1, token_list.items.len);
-    try std.testing.expectEqual(Token{ .op = .greater_equal }, token_list.items[0]);
-}
-
-test "equal operator" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("==");
-    defer token_list.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(1, token_list.items.len);
+    try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .equal }, token_list.items[0]);
-}
-
-test "not equal operator" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("!=");
-    defer token_list.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(1, token_list.items.len);
-    try std.testing.expectEqual(Token{ .op = .not_equal }, token_list.items[0]);
+    try std.testing.expectEqual(Token{ .op = .not_equal }, token_list.items[1]);
 }
 
 test "not equal operator without =" {

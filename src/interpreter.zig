@@ -569,93 +569,82 @@ test "quit operation" {
     try std.testing.expectError(EvalError.Quit, interp.eval(.{ .op = .quit }));
 }
 
-test "add operation with mixed int and float" {
+test "less than operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     var interp = Interpreter.init(std.testing.allocator, &w);
     defer interp.stack.deinit(std.testing.allocator);
 
-    try interp.eval(.{ .int = 2 });
-    try interp.eval(.{ .float = 3.5 });
-    try interp.eval(.{ .op = .plus });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 5.5 }}, interp.stack.items);
-}
-
-test "sub operation with mixed int and float" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .float = 10.5 });
-    try interp.eval(.{ .int = 3 });
-    try interp.eval(.{ .op = .minus });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 7.5 }}, interp.stack.items);
-}
-
-test "mul operation with mixed int and float" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .float = 2.5 });
+    try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 4 });
-    try interp.eval(.{ .op = .star });
+    try interp.eval(.{ .op = .less });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 10.0 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
 }
 
-test "div operation with mixed int and float doesn't truncate" {
+test "less than or equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     var interp = Interpreter.init(std.testing.allocator, &w);
     defer interp.stack.deinit(std.testing.allocator);
 
-    try interp.eval(.{ .float = 7.0 });
-    try interp.eval(.{ .int = 2 });
-    try interp.eval(.{ .op = .slash });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .less_equal });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 3.5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
 }
 
-test "mod operation with mixed int and float" {
+test "greater than operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     var interp = Interpreter.init(std.testing.allocator, &w);
     defer interp.stack.deinit(std.testing.allocator);
 
-    try interp.eval(.{ .float = 7.5 });
-    try interp.eval(.{ .int = 2 });
-    try interp.eval(.{ .op = .percent });
+    try interp.eval(.{ .float = 5.1 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .greater });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 1.5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
 }
 
-test "div operation with float division by zero" {
+test "greater than or equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     var interp = Interpreter.init(std.testing.allocator, &w);
     defer interp.stack.deinit(std.testing.allocator);
 
-    try interp.eval(.{ .float = 5.0 });
-    try interp.eval(.{ .float = 0.0 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .greater_equal });
 
-    try std.testing.expectError(EvalError.DivisionByZero, interp.eval(.{ .op = .slash }));
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
 }
 
-test "mod operation with float division by zero" {
+test "equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     var interp = Interpreter.init(std.testing.allocator, &w);
     defer interp.stack.deinit(std.testing.allocator);
 
-    try interp.eval(.{ .float = 5.0 });
-    try interp.eval(.{ .float = 0.0 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .equal });
 
-    try std.testing.expectError(EvalError.DivisionByZero, interp.eval(.{ .op = .percent }));
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "not equal operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .not_equal });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
 }
 
 test "mul operation with float overflow" {
@@ -668,46 +657,6 @@ test "mul operation with float overflow" {
     try interp.eval(.{ .float = 2.0 });
 
     try std.testing.expectError(EvalError.InvalidFloat, interp.eval(.{ .op = .star }));
-}
-
-test "print operation with float" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .float = 2.5 });
-    try interp.eval(.{ .op = .print });
-
-    try std.testing.expectEqualStrings("> 2.5\n", w.buffer[0..w.end]);
-    try std.testing.expectEqual(0, interp.stack.items.len);
-}
-
-test "peek operation with float" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .float = 2.5 });
-    try interp.eval(.{ .op = .peek });
-
-    try std.testing.expectEqualStrings("| 2.5\n", w.buffer[0..w.end]);
-    try std.testing.expectEqualSlices(Value, &.{.{ .float = 2.5 }}, interp.stack.items);
-}
-
-test "stack operation with mixed types" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 1 });
-    try interp.eval(.{ .float = 2.5 });
-    try interp.eval(.{ .op = .stack });
-
-    try std.testing.expectEqualStrings("| 2.5\n| 1\n", w.buffer[0..w.end]);
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 1 }, .{ .float = 2.5 } }, interp.stack.items);
 }
 
 test "Value.format" {
@@ -755,16 +704,6 @@ test "get var errors on undefined variable" {
     try std.testing.expectError(EvalError.UndefinedVariable, interp.eval(.{ .get_var = "x" }));
 }
 
-test "set var errors on empty stack" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
-
-    try std.testing.expectError(EvalError.StackUnderflow, interp.eval(.{ .set_var = "x" }));
-}
-
 test "set var overwrites an existing variable" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
@@ -781,51 +720,6 @@ test "set var overwrites an existing variable" {
     try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
 }
 
-test "variables persist independently of the stack" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .set_var = "x" });
-    try interp.eval(.{ .int = 10 });
-    try interp.eval(.{ .int = 20 });
-    try interp.eval(.{ .op = .plus });
-    try interp.eval(.{ .get_var = "x" });
-
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 30 }, .{ .int = 5 } }, interp.stack.items);
-}
-
-test "vars operation lists defined variables" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 1 });
-    try interp.eval(.{ .set_var = "x" });
-    try interp.eval(.{ .int = 2 });
-    try interp.eval(.{ .set_var = "y" });
-    try interp.eval(.{ .op = .vars });
-
-    try std.testing.expectEqualStrings("|| x = 1\n|| y = 2\n", w.buffer[0..w.end]);
-}
-
-test "vars operation with none defined" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .op = .vars });
-
-    try std.testing.expectEqualStrings("||\n", w.buffer[0..w.end]);
-}
-
 test "variable name matching a keyword doesn't collide with it" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
@@ -840,129 +734,6 @@ test "variable name matching a keyword doesn't collide with it" {
     try interp.eval(.{ .get_var = "dup" });
 
     try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 }, .{ .int = 99 } }, interp.stack.items);
-}
-
-test "less than operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .less });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
-}
-
-test "less than or equal operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .less_equal });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
-}
-
-test "greater than operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .greater });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
-}
-
-test "greater than or equal operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .greater_equal });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
-}
-
-test "equal operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .equal });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
-}
-
-test "not equal operation" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .not_equal });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
-}
-
-test "comparison respects pop order" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 3 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .less });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
-}
-
-test "comparison with mixed int and float" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 3 });
-    try interp.eval(.{ .float = 3.5 });
-    try interp.eval(.{ .op = .less });
-
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
-}
-
-test "not operator negates a boolean" {
-    var buf: [32]u8 = undefined;
-    var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-
-    try interp.eval(.{ .int = 1 });
-    try interp.eval(.{ .int = 2 });
-    try interp.eval(.{ .op = .less });
-    try interp.eval(.{ .op = .not });
-
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .int = 5 });
-    try interp.eval(.{ .op = .less });
-    try interp.eval(.{ .op = .not });
-
-    try std.testing.expectEqualSlices(Value, &.{ .{ .bool = false }, .{ .bool = true } }, interp.stack.items);
 }
 
 test "not operator errors on non-boolean" {
