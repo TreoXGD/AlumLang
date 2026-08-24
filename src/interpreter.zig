@@ -15,6 +15,7 @@ pub const EvalError = error{
     OverflowOnCommand,
     InvalidFloat,
     UndefinedVariable,
+    NotOnNonBoolean,
     Quit,
 } || Allocator.Error;
 
@@ -63,8 +64,8 @@ pub const Interpreter = struct {
             },
             .op => |op| {
                 switch (op) {
-                    // binary arithmetic operations
-                    .plus, .minus, .star, .slash, .percent, .min, .max => {
+                    // binary operations
+                    .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
                         const rhs = try isNumber(try self.popOrError());
                         const lhs = try isNumber(try self.popOrError());
 
@@ -85,13 +86,19 @@ pub const Interpreter = struct {
                         const second = try self.peekAtOrError(1);
                         try self.stack.append(self.arena, second);
                     },
-                    // unary operations with return
+                    // unary arithmetic operations
                     .neg, .abs => {
                         const num = try isNumber(try self.popOrError());
 
                         const result = try computeUnary(op, num);
 
                         try self.stack.append(self.arena, result);
+                    },
+                    .not => {
+                        const val = try self.popOrError();
+                        if (val != .bool) return EvalError.NotOnNonBoolean;
+
+                        try self.stack.append(self.arena, .{ .bool = !val.bool });
                     },
                     // unary operations without return
                     .dup => {
@@ -141,6 +148,13 @@ pub const Interpreter = struct {
                             \\* - pops 2, pushes their product
                             \\/ - pops 2, pushes their second-from-top over top and errors if top is 0
                             \\% - pops 2, pushes remainder of second-from-top over top and errors if top is 0
+                            \\< - pops 2, pushes boolean showing if second-from-top is less than top
+                            \\<= - pops 2, pushes boolean showing if second-from-top is less or equal than top
+                            \\> - pops 2, pushes boolean showing if second-from-top is greater than top
+                            \\>= - pops 2, pushes boolean showing if second-from-top is greater or equal than top
+                            \\== - pops 2, pushes boolean showing if second-from-top is equal than top
+                            \\!= - pops 2, pushes boolean showing if second-from-top is not equal than top
+                            \\! - pops 1, pushes opposite boolean value
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
                             \\neg - pops 1, pushes its negations
@@ -178,12 +192,23 @@ pub const Interpreter = struct {
 
     // checks the types of both lhs and rhs. calls numOp afterwards
     fn computeBin(op: OpType, lhs: Value, rhs: Value) EvalError!Value {
-        if (lhs == .int and rhs == .int) return .{ .int = try numOp(i32, op, lhs.int, rhs.int) };
+        // comparison operators
+        if (isCompOp(op)) {
+            if (lhs == .int and rhs == .int) return .{ .bool = numCompOp(i32, op, lhs.int, rhs.int) };
+
+            const lf: f64 = if (lhs == .int) @floatFromInt(lhs.int) else lhs.float;
+            const rf: f64 = if (rhs == .int) @floatFromInt(rhs.int) else rhs.float;
+
+            return .{ .bool = numCompOp(f64, op, lf, rf) };
+        }
+
+        // arithmetic operators
+        if (lhs == .int and rhs == .int) return .{ .int = try numArithOp(i32, op, lhs.int, rhs.int) };
 
         const lf: f64 = if (lhs == .int) @floatFromInt(lhs.int) else lhs.float;
         const rf: f64 = if (rhs == .int) @floatFromInt(rhs.int) else rhs.float;
 
-        const res = try numOp(f64, op, lf, rf);
+        const res = try numArithOp(f64, op, lf, rf);
         if (std.math.isInf(res) or std.math.isNan(res)) return EvalError.InvalidFloat;
         return .{ .float = res };
     }
@@ -205,7 +230,7 @@ pub const Interpreter = struct {
     }
 
     // finds the result of 'lhs op rhs' expression and returns it with same type as the arguments
-    fn numOp(T: type, op: OpType, lhs: T, rhs: T) EvalError!T {
+    fn numArithOp(T: type, op: OpType, lhs: T, rhs: T) EvalError!T {
         return blk: switch (op) {
             .plus => if (T == i32) {
                 const res = @addWithOverflow(lhs, rhs);
@@ -233,6 +258,25 @@ pub const Interpreter = struct {
             .min => @min(lhs, rhs),
             .max => @max(lhs, rhs),
             else => unreachable,
+        };
+    }
+
+    fn numCompOp(T: type, op: OpType, lhs: T, rhs: T) bool {
+        return switch (op) {
+            .less => lhs < rhs,
+            .less_equal => lhs <= rhs,
+            .greater => lhs > rhs,
+            .greater_equal => lhs >= rhs,
+            .equal => lhs == rhs,
+            .not_equal => lhs != rhs,
+            else => unreachable,
+        };
+    }
+
+    fn isCompOp(op: OpType) bool {
+        return switch (op) {
+            .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => true,
+            else => false,
         };
     }
 
@@ -796,4 +840,154 @@ test "variable name matching a keyword doesn't collide with it" {
     try interp.eval(.{ .get_var = "dup" });
 
     try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 }, .{ .int = 99 } }, interp.stack.items);
+}
+
+test "less than operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .less });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
+}
+
+test "less than or equal operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .less_equal });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "greater than operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .greater });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
+}
+
+test "greater than or equal operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .greater_equal });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "equal operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .equal });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "not equal operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .not_equal });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
+}
+
+test "comparison respects pop order" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 3 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .less });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "comparison with mixed int and float" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 3 });
+    try interp.eval(.{ .float = 3.5 });
+    try interp.eval(.{ .op = .less });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+}
+
+test "not operator negates a boolean" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 1 });
+    try interp.eval(.{ .int = 2 });
+    try interp.eval(.{ .op = .less });
+    try interp.eval(.{ .op = .not });
+
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .int = 5 });
+    try interp.eval(.{ .op = .less });
+    try interp.eval(.{ .op = .not });
+
+    try std.testing.expectEqualSlices(Value, &.{ .{ .bool = false }, .{ .bool = true } }, interp.stack.items);
+}
+
+test "not operator errors on non-boolean" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 5 });
+
+    try std.testing.expectError(EvalError.NotOnNonBoolean, interp.eval(.{ .op = .not }));
+}
+
+test "comparison errors on a boolean operand" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 1 });
+    try interp.eval(.{ .int = 2 });
+    try interp.eval(.{ .op = .less });
+    try interp.eval(.{ .int = 1 });
+    try interp.eval(.{ .int = 2 });
+    try interp.eval(.{ .op = .less });
+
+    try std.testing.expectError(EvalError.ArithmeticWithNoNumber, interp.eval(.{ .op = .equal }));
 }

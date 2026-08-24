@@ -46,13 +46,14 @@ fn repl(init: std.process.Init) !void {
                 LexError.DecimalPointWithoutNumber => stderr.writeAll("The floating number must have at least 1 number after '.'\n"),
                 LexError.GetVarWithoutValidVar => stderr.writeAll("The '@' symbol should have at least one alphabetic character.\n"),
                 LexError.SetVarWithoutValidVar => stderr.writeAll("The '$' symbol should have at least one alphabetic character.\n"),
+                LexError.EqualWithoutSecondEqual => stderr.writeAll("The '=' symbol should have another '=' after itself.\n"),
             };
             try stderr.flush();
             continue :loop;
         };
         defer token_list.deinit(arena);
 
-        // std.debug.print("{any}\n", .{token_list.items});
+        std.debug.print("{any}\n", .{token_list.items});
         // evaluating
         for (token_list.items) |token| {
             interpreter.eval(token) catch |err| {
@@ -65,6 +66,7 @@ fn repl(init: std.process.Init) !void {
                     EvalError.OverflowOnCommand => stderr.writeAll("Number overflowed on command.\n"),
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
                     EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
+                    EvalError.NotOnNonBoolean => stderr.writeAll("Cannot flip boolean value on a non-boolean value.\n"),
                     EvalError.Quit => break :loop,
                 };
                 try stderr.flush();
