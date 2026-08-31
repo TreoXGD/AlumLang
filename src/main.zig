@@ -65,7 +65,7 @@ fn repl(init: std.process.Init) !void {
                     EvalError.OverflowOnCommand => stderr.writeAll("Number overflowed on command.\n"),
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
                     EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
-                    EvalError.NotOnNonBoolean => stderr.writeAll("Cannot flip boolean value on a non-boolean value.\n"),
+                    EvalError.NotABoolean => stderr.writeAll("Cannot use boolean operation on a non-boolean value.\n"),
                     EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
                     EvalError.NotABlock => stderr.writeAll("Unable to use block invoking operations with a non-block value.\n"),
                     EvalError.CallStackOverflow => stderr.writeAll("Got over maximum allowed recursive calls.\n"),

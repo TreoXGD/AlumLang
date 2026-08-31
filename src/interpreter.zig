@@ -15,9 +15,9 @@ pub const EvalError = error{
     OverflowOnCommand,
     InvalidFloat,
     UndefinedVariable,
-    NotOnNonBoolean,
     UnmatchedRightBrace,
     NotABlock,
+    NotABoolean,
     CallStackOverflow,
     Quit,
 } || Allocator.Error;
@@ -110,6 +110,17 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, top);
                         try self.stack.append(self.arena, bottom);
                     },
+                    .ifelse => {
+                        const else_branch = try isBlock(try self.popOrError());
+                        const then_branch = try isBlock(try self.popOrError());
+                        const cond = try isBool(try self.popOrError());
+
+                        if (cond) {
+                            try self.callBlock(then_branch);
+                        } else {
+                            try self.callBlock(else_branch);
+                        }
+                    },
                     // binary
                     .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
                         const rhs = try isNumber(try self.popOrError());
@@ -131,6 +142,12 @@ pub const Interpreter = struct {
                         const second = try self.peekAtOrError(1);
                         try self.stack.append(self.arena, second);
                     },
+                    .@"if" => {
+                        const then_branch = try isBlock(try self.popOrError());
+                        const cond = try isBool(try self.popOrError());
+
+                        if (cond) try self.callBlock(then_branch);
+                    },
                     // unary
                     .neg, .abs => {
                         const num = try isNumber(try self.popOrError());
@@ -140,10 +157,9 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, result);
                     },
                     .not => {
-                        const val = try self.popOrError();
-                        if (val != .bool) return EvalError.NotOnNonBoolean;
+                        const val = try isBool(try self.popOrError());
 
-                        try self.stack.append(self.arena, .{ .bool = !val.bool });
+                        try self.stack.append(self.arena, .{ .bool = !val });
                     },
                     .dup => {
                         const num = try self.popOrError();
@@ -154,14 +170,7 @@ pub const Interpreter = struct {
                     .call => {
                         const block = try isBlock(try self.popOrError());
 
-                        if (self.recursion_depth > max_recursion_depth) return EvalError.CallStackOverflow;
-
-                        self.recursion_depth += 1;
-                        defer self.recursion_depth -= 1;
-
-                        for (block.block) |t| {
-                            try self.eval(t);
-                        }
+                        try self.callBlock(block);
                     },
                     .left_brace => self.block_level += 1,
                     .right_brace => return EvalError.UnmatchedRightBrace,
@@ -192,6 +201,8 @@ pub const Interpreter = struct {
                     .quit => return EvalError.Quit,
                     .help => {
                         const help_commands =
+                            \\(ident) -> [A-Za-z][A-Za-z0-9]*
+                            \\
                             \\+ - pops 2, pushes their sum
                             \\- - pops 2, pushes their second-from-top minus top
                             \\* - pops 2, pushes their product
@@ -204,6 +215,8 @@ pub const Interpreter = struct {
                             \\== - pops 2, pushes boolean showing if second-from-top is equal than top
                             \\!= - pops 2, pushes boolean showing if second-from-top is not equal than top
                             \\! - pops 1, pushes opposite boolean value
+                            \\{ - starts a new block
+                            \\} - ends the innermost block
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
                             \\neg - pops 1, pushes its negations
@@ -211,6 +224,8 @@ pub const Interpreter = struct {
                             \\min - pops 2, pushes smaller value
                             \\max - pops 2, pushes bigger value
                             \\call - pops 1, executes the value only if it is a block and errors otherwise
+                            \\if - pops 2, executes the top block only if second-from-top bool is true
+                            \\ifelse - pops 3, executes the second-from-top stack block only if third-from-top bool is true, top block otherwise
                             \\dup - pushes a copy of the top
                             \\swap - swaps the 2 top values
                             \\drop - pops the top
@@ -235,16 +250,34 @@ pub const Interpreter = struct {
 
     // checks if the given value is of a numeric type
     fn isNumber(val: Value) EvalError!Value {
-        switch (val) {
-            .int, .float => return val,
-            else => return EvalError.ArithmeticWithNoNumber,
-        }
+        return switch (val) {
+            .int, .float => val,
+            else => EvalError.ArithmeticWithNoNumber,
+        };
     }
 
-    fn isBlock(val: Value) EvalError!Value {
-        switch (val) {
-            .block => return val,
-            else => return EvalError.NotABlock,
+    fn isBool(val: Value) EvalError!bool {
+        return switch (val) {
+            .bool => |b| b,
+            else => EvalError.NotABoolean,
+        };
+    }
+
+    fn isBlock(val: Value) EvalError![]Token {
+        return switch (val) {
+            .block => |b| b,
+            else => EvalError.NotABlock,
+        };
+    }
+
+    fn callBlock(self: *Interpreter, block: []Token) EvalError!void {
+        if (self.recursion_depth > max_recursion_depth) return EvalError.CallStackOverflow;
+
+        self.recursion_depth += 1;
+        defer self.recursion_depth -= 1;
+
+        for (block) |token| {
+            try self.eval(token);
         }
     }
 
