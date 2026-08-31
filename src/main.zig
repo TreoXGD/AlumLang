@@ -61,12 +61,14 @@ fn repl(init: std.process.Init) !void {
                     EvalError.StackUnderflow => stderr.writeAll("Stack underflow. Not enough arguments for the operation.\n"),
                     EvalError.OutOfMemory => stderr.writeAll("Stack has ran out of memory.\n"),
                     EvalError.WriteFailed => stderr.writeAll("Unable to write to stdout.\n"),
-                    EvalError.ArithmeticWithNoNumber => stderr.writeAll("Unable to use arithmetic commands with non-number arguments.\n"),
+                    EvalError.ArithmeticWithNoNumber => stderr.writeAll("Unable to use arithmetic operations with non-number arguments.\n"),
                     EvalError.OverflowOnCommand => stderr.writeAll("Number overflowed on command.\n"),
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
                     EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
                     EvalError.NotOnNonBoolean => stderr.writeAll("Cannot flip boolean value on a non-boolean value.\n"),
                     EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
+                    EvalError.NotABlock => stderr.writeAll("Unable to use block invoking operations with a non-block value.\n"),
+                    EvalError.CallStackOverflow => stderr.writeAll("Got over maximum allowed recursive calls.\n"),
                     EvalError.Quit => break :loop,
                 };
                 try stderr.flush();

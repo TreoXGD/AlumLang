@@ -132,7 +132,7 @@ pub const Lexer = struct {
             },
             .get_or_set_var => {
                 const start_index = self.index;
-                while (!self.isAtEnd() and std.ascii.isAlphabetic(self.text[self.index])) self.index += 1;
+                while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
 
                 const ident = try self.arena.dupe(u8, self.text[start_index..self.index]);
                 const token: Token = switch (self.text[start_index - 1]) {

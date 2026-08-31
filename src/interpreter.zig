@@ -17,6 +17,8 @@ pub const EvalError = error{
     UndefinedVariable,
     NotOnNonBoolean,
     UnmatchedRightBrace,
+    NotABlock,
+    CallStackOverflow,
     Quit,
 } || Allocator.Error;
 
@@ -45,9 +47,12 @@ pub const Value = union(enum) {
 
 pub const Stack = Aligned(Value, null);
 
+const max_recursion_depth = 1000;
+
 pub const Interpreter = struct {
     arena: Allocator,
     writer: *std.Io.Writer,
+    recursion_depth: u32 = 0,
     block_level: u32 = 0,
     block_contents: Aligned(Token, null) = .empty,
     stack: Stack = .empty,
@@ -95,7 +100,17 @@ pub const Interpreter = struct {
             },
             .op => |op| {
                 switch (op) {
-                    // binary operations
+                    // tertiary
+                    .rot => {
+                        const top = try self.popOrError();
+                        const middle = try self.popOrError();
+                        const bottom = try self.popOrError();
+
+                        try self.stack.append(self.arena, middle);
+                        try self.stack.append(self.arena, top);
+                        try self.stack.append(self.arena, bottom);
+                    },
+                    // binary
                     .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
                         const rhs = try isNumber(try self.popOrError());
                         const lhs = try isNumber(try self.popOrError());
@@ -104,7 +119,6 @@ pub const Interpreter = struct {
 
                         try self.stack.append(self.arena, result);
                     },
-                    // binary operations without return
                     .swap => {
                         const rhs = try self.popOrError();
                         const lhs = try self.popOrError();
@@ -117,7 +131,7 @@ pub const Interpreter = struct {
                         const second = try self.peekAtOrError(1);
                         try self.stack.append(self.arena, second);
                     },
-                    // unary arithmetic operations
+                    // unary
                     .neg, .abs => {
                         const num = try isNumber(try self.popOrError());
 
@@ -131,29 +145,30 @@ pub const Interpreter = struct {
 
                         try self.stack.append(self.arena, .{ .bool = !val.bool });
                     },
-                    // unary operations without return
                     .dup => {
                         const num = try self.popOrError();
 
                         try self.stack.append(self.arena, num);
                         try self.stack.append(self.arena, num);
                     },
+                    .call => {
+                        const block = try isBlock(try self.popOrError());
+
+                        if (self.recursion_depth > max_recursion_depth) return EvalError.CallStackOverflow;
+
+                        self.recursion_depth += 1;
+                        defer self.recursion_depth -= 1;
+
+                        for (block.block) |t| {
+                            try self.eval(t);
+                        }
+                    },
                     .left_brace => self.block_level += 1,
                     .right_brace => return EvalError.UnmatchedRightBrace,
-                    // tertiary operations
-                    .rot => {
-                        const top = try self.popOrError();
-                        const middle = try self.popOrError();
-                        const bottom = try self.popOrError();
-
-                        try self.stack.append(self.arena, middle);
-                        try self.stack.append(self.arena, top);
-                        try self.stack.append(self.arena, bottom);
-                    },
-                    // no argument operations
                     .drop => _ = try self.popOrError(),
                     .print => try self.writer.print("> {f}\n", .{try self.popOrError()}),
                     .peek => try self.writer.print("| {f}\n", .{try self.peekAtOrError(0)}),
+                    // no argument
                     .clear => self.stack.clearRetainingCapacity(),
                     .stack => {
                         if (self.stack.items.len == 0) {
@@ -173,6 +188,7 @@ pub const Interpreter = struct {
                             }
                         }
                     },
+                    .varclear => self.var_dict.clearRetainingCapacity(),
                     .quit => return EvalError.Quit,
                     .help => {
                         const help_commands =
@@ -194,6 +210,7 @@ pub const Interpreter = struct {
                             \\abs - pops 1, pushes its absolute value
                             \\min - pops 2, pushes smaller value
                             \\max - pops 2, pushes bigger value
+                            \\call - pops 1, executes the value only if it is a block and errors otherwise
                             \\dup - pushes a copy of the top
                             \\swap - swaps the 2 top values
                             \\drop - pops the top
@@ -204,6 +221,7 @@ pub const Interpreter = struct {
                             \\peek - prints the top without popping
                             \\stack - prints the entire stack top to bottom without popping
                             \\vars - prints the entire list of defined variables
+                            \\varclear - empties the list of defined variables
                             \\quit - exit the program
                             \\help - shows this message
                         ;
@@ -220,6 +238,13 @@ pub const Interpreter = struct {
         switch (val) {
             .int, .float => return val,
             else => return EvalError.ArithmeticWithNoNumber,
+        }
+    }
+
+    fn isBlock(val: Value) EvalError!Value {
+        switch (val) {
+            .block => return val,
+            else => return EvalError.NotABlock,
         }
     }
 
