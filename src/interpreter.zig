@@ -16,6 +16,7 @@ pub const EvalError = error{
     InvalidFloat,
     UndefinedVariable,
     NotOnNonBoolean,
+    UnmatchedRightBrace,
     Quit,
 } || Allocator.Error;
 
@@ -23,12 +24,21 @@ pub const Value = union(enum) {
     int: i32,
     float: f64,
     bool: bool,
+    block: []Token,
 
     pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try switch (self) {
             .int => |i| writer.print("{d}", .{i}),
             .float => |f| if (f == @floor(f)) writer.print("{d:.1}", .{f}) else writer.print("{d}", .{f}),
             .bool => |b| writer.print("{}", .{b}),
+            .block => |b| {
+                try writer.writeAll("{ ");
+                for (b, 0..) |token, i| {
+                    if (i > 0) try writer.writeByte(' ');
+                    try writer.print("{f}", .{token});
+                }
+                try writer.writeAll(" }");
+            },
         };
     }
 };
@@ -38,6 +48,8 @@ pub const Stack = Aligned(Value, null);
 pub const Interpreter = struct {
     arena: Allocator,
     writer: *std.Io.Writer,
+    block_level: u32 = 0,
+    block_contents: Aligned(Token, null) = .empty,
     stack: Stack = .empty,
     var_dict: std.array_hash_map.String(Value) = .empty,
 
@@ -49,6 +61,25 @@ pub const Interpreter = struct {
     }
 
     pub fn eval(self: *Interpreter, token: Token) EvalError!void {
+        if (self.block_level != 0) {
+            switch (token) {
+                .op => |op| {
+                    if (op == .left_brace) self.block_level += 1;
+                    if (op == .right_brace) self.block_level -= 1;
+                },
+                else => {},
+            }
+
+            if (self.block_level == 0) {
+                const block = try self.block_contents.toOwnedSlice(self.arena);
+                try self.stack.append(self.arena, .{ .block = block });
+            } else {
+                try self.block_contents.append(self.arena, token);
+            }
+
+            return;
+        }
+
         switch (token) {
             .int => |i| try self.stack.append(self.arena, .{ .int = i }),
             .float => |f| try self.stack.append(self.arena, .{ .float = f }),
@@ -107,6 +138,8 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, num);
                         try self.stack.append(self.arena, num);
                     },
+                    .left_brace => self.block_level += 1,
+                    .right_brace => return EvalError.UnmatchedRightBrace,
                     // tertiary operations
                     .rot => {
                         const top = try self.popOrError();

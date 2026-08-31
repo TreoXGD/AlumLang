@@ -32,7 +32,7 @@ fn repl(init: std.process.Init) !void {
 
     loop: while (true) {
         // prompt part
-        try stdout.writeAll("# ");
+        try stdout.print("{s}", .{if (interpreter.block_level == 0) "# " else "< "});
         try stdout.flush();
         const prompt = try stdin.takeDelimiter('\n') orelse break :loop;
 
@@ -53,7 +53,6 @@ fn repl(init: std.process.Init) !void {
         };
         defer token_list.deinit(arena);
 
-        std.debug.print("{any}\n", .{token_list.items});
         // evaluating
         for (token_list.items) |token| {
             interpreter.eval(token) catch |err| {
@@ -67,6 +66,7 @@ fn repl(init: std.process.Init) !void {
                     EvalError.InvalidFloat => stderr.writeAll("Command resulted in unrepresentable floating point number.\n"),
                     EvalError.UndefinedVariable => stderr.writeAll("There are no variables defined with that name.\n"),
                     EvalError.NotOnNonBoolean => stderr.writeAll("Cannot flip boolean value on a non-boolean value.\n"),
+                    EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
                     EvalError.Quit => break :loop,
                 };
                 try stderr.flush();

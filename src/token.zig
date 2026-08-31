@@ -1,3 +1,4 @@
+const std = @import("std");
 // INFO: try to not forget to update info in help command when changing operations
 pub const OpType = enum {
     plus,
@@ -12,6 +13,8 @@ pub const OpType = enum {
     equal,
     not_equal,
     not,
+    left_brace,
+    right_brace,
     neg,
     abs,
     min,
@@ -28,6 +31,41 @@ pub const OpType = enum {
     vars,
     quit,
     help,
+
+    fn opToStr(self: OpType) []const u8 {
+        return switch (self) {
+            .plus => "+",
+            .minus => "-",
+            .star => "*",
+            .slash => "/",
+            .percent => "%",
+            .less => "<",
+            .less_equal => "<=",
+            .greater => ">",
+            .greater_equal => ">=",
+            .equal => "==",
+            .not_equal => "!=",
+            .not => "!",
+            .dup => "dup",
+            .swap => "swap",
+            .drop => "drop",
+            .over => "over",
+            .rot => "rot",
+            .neg => "neg",
+            .abs => "abs",
+            .min => "min",
+            .max => "max",
+            .clear => "clear",
+            .print => "print",
+            .peek => "peek",
+            .stack => "stack",
+            .vars => "vars",
+            .quit => "quit",
+            .help => "help",
+            .left_brace => "{",
+            .right_brace => "}",
+        };
+    }
 };
 
 pub const Token = union(enum) {
@@ -37,4 +75,15 @@ pub const Token = union(enum) {
     op: OpType,
     set_var: []const u8,
     get_var: []const u8,
+
+    pub fn format(self: Token, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .int => |i| try writer.print("{d}", .{i}),
+            .float => |f| if (f == @floor(f)) try writer.print("{d:.1}", .{f}) else try writer.print("{d}", .{f}),
+            .bool => |b| try writer.print("{}", .{b}),
+            .op => |op| try writer.writeAll(op.opToStr()),
+            .set_var => |v| try writer.print("${s}", .{v}),
+            .get_var => |v| try writer.print("@{s}", .{v}),
+        }
+    }
 };
