@@ -46,7 +46,7 @@ pub const Lexer = struct {
                     '0'...'9' => {
                         continue :state .num;
                     },
-                    '+', '*', '/', '%', '<', '>', '=', '!', '{', '}' => continue :state .op,
+                    '+', '*', '/', '%', '<', '>', '=', '!', '&', '|', '{', '}' => continue :state .op,
                     '-' => {
                         if (!self.isAtEnd() and std.ascii.isDigit(self.peekAt(0))) continue :state .num;
 
@@ -94,6 +94,8 @@ pub const Lexer = struct {
                     '>' => if (!self.isAtEnd() and self.matchAdvance('=')) .greater_equal else .greater,
                     '=' => if (!self.isAtEnd() and self.matchAdvance('=')) .equal else return LexError.EqualWithoutSecondEqual,
                     '!' => if (!self.isAtEnd() and self.matchAdvance('=')) .not_equal else .not,
+                    '&' => if (!self.isAtEnd() and self.matchAdvance('&')) .amp_amp else .amp,
+                    '|' => if (!self.isAtEnd() and self.matchAdvance('|')) .bar_bar else .bar,
                     else => unreachable,
                 };
 

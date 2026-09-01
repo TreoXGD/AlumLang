@@ -11,11 +11,13 @@ pub const EvalError = error{
     StackUnderflow,
     DivisionByZero,
     WriteFailed,
-    ArithmeticWithNoNumber,
     OverflowOnCommand,
     InvalidFloat,
     UndefinedVariable,
     UnmatchedRightBrace,
+    NotANumber,
+    NotAnInteger,
+    NotAFloat,
     NotABlock,
     NotABoolean,
     CallStackOverflow,
@@ -27,6 +29,41 @@ pub const Value = union(enum) {
     float: f64,
     bool: bool,
     block: []Token,
+
+    fn isNumber(self: Value) EvalError!Value {
+        return switch (self) {
+            .int, .float => self,
+            else => EvalError.NotANumber,
+        };
+    }
+
+    fn isInteger(self: Value) EvalError!i32 {
+        return switch (self) {
+            .int => |i| i,
+            else => EvalError.NotAnInteger,
+        };
+    }
+
+    fn isFloat(self: Value) EvalError!f64 {
+        return switch (self) {
+            .float => |f| f,
+            else => EvalError.NotAFloat,
+        };
+    }
+
+    fn isBool(self: Value) EvalError!bool {
+        return switch (self) {
+            .bool => |b| b,
+            else => EvalError.NotABoolean,
+        };
+    }
+
+    fn isBlock(self: Value) EvalError![]Token {
+        return switch (self) {
+            .block => |b| b,
+            else => EvalError.NotABlock,
+        };
+    }
 
     pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try switch (self) {
@@ -111,9 +148,9 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, bottom);
                     },
                     .ifelse => {
-                        const else_branch = try isBlock(try self.popOrError());
-                        const then_branch = try isBlock(try self.popOrError());
-                        const cond = try isBool(try self.popOrError());
+                        const else_branch = try (try self.popOrError()).isBlock();
+                        const then_branch = try (try self.popOrError()).isBlock();
+                        const cond = try (try self.popOrError()).isBool();
 
                         if (cond) {
                             try self.callBlock(then_branch);
@@ -123,10 +160,34 @@ pub const Interpreter = struct {
                     },
                     // binary
                     .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
-                        const rhs = try isNumber(try self.popOrError());
-                        const lhs = try isNumber(try self.popOrError());
+                        const rhs = try (try self.popOrError()).isNumber();
+                        const lhs = try (try self.popOrError()).isNumber();
 
                         const result = try computeBin(op, lhs, rhs);
+
+                        try self.stack.append(self.arena, result);
+                    },
+                    .amp, .bar => {
+                        const rhs = try (try self.popOrError()).isInteger();
+                        const lhs = try (try self.popOrError()).isInteger();
+
+                        const result: Value = switch (op) {
+                            .amp => .{ .int = lhs & rhs },
+                            .bar => .{ .int = lhs | rhs },
+                            else => unreachable,
+                        };
+
+                        try self.stack.append(self.arena, result);
+                    },
+                    .amp_amp, .bar_bar => {
+                        const rhs = try (try self.popOrError()).isBool();
+                        const lhs = try (try self.popOrError()).isBool();
+
+                        const result: Value = switch (op) {
+                            .amp_amp => .{ .bool = lhs and rhs },
+                            .bar_bar => .{ .bool = lhs or rhs },
+                            else => unreachable,
+                        };
 
                         try self.stack.append(self.arena, result);
                     },
@@ -143,21 +204,21 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, second);
                     },
                     .@"if" => {
-                        const then_branch = try isBlock(try self.popOrError());
-                        const cond = try isBool(try self.popOrError());
+                        const then_branch = try (try self.popOrError()).isBlock();
+                        const cond = try (try self.popOrError()).isBool();
 
                         if (cond) try self.callBlock(then_branch);
                     },
                     // unary
                     .neg, .abs => {
-                        const num = try isNumber(try self.popOrError());
+                        const num = try (try self.popOrError()).isNumber();
 
                         const result = try computeUnary(op, num);
 
                         try self.stack.append(self.arena, result);
                     },
                     .not => {
-                        const val = try isBool(try self.popOrError());
+                        const val = try (try self.popOrError()).isBool();
 
                         try self.stack.append(self.arena, .{ .bool = !val });
                     },
@@ -168,7 +229,7 @@ pub const Interpreter = struct {
                         try self.stack.append(self.arena, num);
                     },
                     .call => {
-                        const block = try isBlock(try self.popOrError());
+                        const block = try (try self.popOrError()).isBlock();
 
                         try self.callBlock(block);
                     },
@@ -247,28 +308,6 @@ pub const Interpreter = struct {
                 }
             },
         }
-    }
-
-    // checks if the given value is of a numeric type
-    fn isNumber(val: Value) EvalError!Value {
-        return switch (val) {
-            .int, .float => val,
-            else => EvalError.ArithmeticWithNoNumber,
-        };
-    }
-
-    fn isBool(val: Value) EvalError!bool {
-        return switch (val) {
-            .bool => |b| b,
-            else => EvalError.NotABoolean,
-        };
-    }
-
-    fn isBlock(val: Value) EvalError![]Token {
-        return switch (val) {
-            .block => |b| b,
-            else => EvalError.NotABlock,
-        };
     }
 
     fn callBlock(self: *Interpreter, block: []Token) EvalError!void {
@@ -769,7 +808,7 @@ test "arithmetic errors on non-numeric value" {
     try interp.stack.append(interp.arena, .{ .bool = true });
     try interp.stack.append(interp.arena, .{ .int = 1 });
 
-    try std.testing.expectError(EvalError.ArithmeticWithNoNumber, interp.eval(.{ .op = .plus }));
+    try std.testing.expectError(EvalError.NotANumber, interp.eval(.{ .op = .plus }));
 }
 
 test "set var and get var operations" {
@@ -852,5 +891,5 @@ test "comparison errors on a boolean operand" {
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .less });
 
-    try std.testing.expectError(EvalError.ArithmeticWithNoNumber, interp.eval(.{ .op = .equal }));
+    try std.testing.expectError(EvalError.NotANumber, interp.eval(.{ .op = .equal }));
 }
