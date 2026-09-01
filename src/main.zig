@@ -46,6 +46,7 @@ fn repl(init: std.process.Init) !void {
                 LexError.DecimalPointWithoutNumber => stderr.writeAll("The floating number must have at least 1 number after '.'\n"),
                 LexError.GetVarWithoutValidVar => stderr.writeAll("The '@' symbol should have at least one alphabetic character.\n"),
                 LexError.SetVarWithoutValidVar => stderr.writeAll("The '$' symbol should have at least one alphabetic character.\n"),
+                LexError.CallVarWithoutValidVar => stderr.writeAll("The ':' symbol should have at least one alphabetic character.\n"),
                 LexError.EqualWithoutSecondEqual => stderr.writeAll("The '=' symbol should have another '=' after itself.\n"),
             };
             try stderr.flush();

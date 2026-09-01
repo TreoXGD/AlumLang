@@ -219,6 +219,7 @@ pub const Interpreter = struct {
                             \\} - ends the innermost block
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
+                            \\:(ident) - pushes block value of defined (ident) variable onto the stack and executes it
                             \\neg - pops 1, pushes its negations
                             \\abs - pops 1, pushes its absolute value
                             \\min - pops 2, pushes smaller value

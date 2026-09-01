@@ -14,6 +14,7 @@ pub const LexError = error{
     DecimalPointWithoutNumber,
     GetVarWithoutValidVar,
     SetVarWithoutValidVar,
+    CallVarWithoutValidVar,
     EqualWithoutSecondEqual,
 } || Allocator.Error;
 
@@ -54,6 +55,17 @@ pub const Lexer = struct {
                     ';' => {
                         while (!self.isAtEnd() and self.peekAt(0) != '\n') self.index += 1;
                         continue :state .start;
+                    },
+                    ':' => {
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.CallVarWithoutValidVar;
+                        const start_index = self.index;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+
+                        const ident = try self.arena.dupe(u8, self.text[start_index..self.index]);
+
+                        // syntactic sugar: :(ident) => @(ident) call
+                        try token_list.append(self.arena, .{ .get_var = ident });
+                        try token_list.append(self.arena, .{ .op = .call });
                     },
                     '@' => {
                         if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.GetVarWithoutValidVar;
