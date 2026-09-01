@@ -836,7 +836,7 @@ test "not operator errors on non-boolean" {
 
     try interp.eval(.{ .int = 5 });
 
-    try std.testing.expectError(EvalError.NotOnNonBoolean, interp.eval(.{ .op = .not }));
+    try std.testing.expectError(EvalError.NotABoolean, interp.eval(.{ .op = .not }));
 }
 
 test "comparison errors on a boolean operand" {
