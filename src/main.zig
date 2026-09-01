@@ -24,7 +24,9 @@ fn repl(init: std.process.Init) !void {
     const stderr = &stderr_file_writer.interface;
     // stdin
     var stdin_buffer: [1024]u8 = undefined;
-    var stdin_file_reader: Io.File.Reader = .init(.stdin(), io, &stdin_buffer);
+    const stdin_file = Io.File.stdin();
+    const is_tty = stdin_file.isTty(io) catch false;
+    var stdin_file_reader: Io.File.Reader = .init(stdin_file, io, &stdin_buffer);
     const stdin = &stdin_file_reader.interface;
 
     var lexer = Lexer{ .arena = arena };
@@ -32,7 +34,8 @@ fn repl(init: std.process.Init) !void {
 
     loop: while (true) {
         // prompt part
-        try stdout.print("{s}", .{if (interpreter.block_level == 0) "# " else "< "});
+        if (is_tty) try stdout.print("{s}", .{if (interpreter.block_level == 0) "# " else "< "});
+
         try stdout.flush();
         const prompt = try stdin.takeDelimiter('\n') orelse break :loop;
 
