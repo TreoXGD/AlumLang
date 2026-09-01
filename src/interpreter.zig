@@ -276,6 +276,10 @@ pub const Interpreter = struct {
                             \\== - pops 2, pushes boolean showing if second-from-top is equal than top
                             \\!= - pops 2, pushes boolean showing if second-from-top is not equal than top
                             \\! - pops 1, pushes opposite boolean value
+                            \\& - pops 2, pushes their bitwise and
+                            \\&& - pops 2, pushes their boolean and
+                            \\| - pops 2, pushes their bitwise or
+                            \\|| - pops 2, pushes their boolean or
                             \\{ - starts a new block
                             \\} - ends the innermost block
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
