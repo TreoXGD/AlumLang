@@ -66,6 +66,7 @@ pub const Lexer = struct {
                         // syntactic sugar: :(ident) => @(ident) call
                         try token_list.append(self.arena, .{ .get_var = ident });
                         try token_list.append(self.arena, .{ .op = .call });
+                        continue :state .start;
                     },
                     '@' => {
                         if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.GetVarWithoutValidVar;
@@ -165,6 +166,8 @@ pub const Lexer = struct {
 
     fn strToKeyword(str: []const u8) LexError!Token {
         const op = std.meta.stringToEnum(OpType, str) orelse return LexError.NotKeyword;
+        // check so something like `not` does not get registered as `!`
+        if (op.isOpSymbol()) return LexError.NotKeyword;
         return .{ .op = op };
     }
 

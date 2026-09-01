@@ -74,6 +74,27 @@ pub const OpType = enum {
             .right_brace => "}",
         };
     }
+
+    pub fn isOpSymbol(self: OpType) bool {
+        return switch (self) {
+            .plus,
+            .minus,
+            .star,
+            .slash,
+            .percent,
+            .less,
+            .less_equal,
+            .greater,
+            .greater_equal,
+            .equal,
+            .not_equal,
+            .not,
+            .left_brace,
+            .right_brace,
+            => true,
+            else => false,
+        };
+    }
 };
 
 pub const Token = union(enum) {
