@@ -77,7 +77,7 @@ These don't short-circuit the way `&&`/`||` do in most languages and structurall
 
 There's also `:name`, which is shorthand for `@name call`. Saves typing the same two things over and over for something you call a lot.
 
-## Blocks, call, if / ifelse
+## Blocks, call, if / ifelse, while
 
 `{ ... }` doesn't run what's inside it, and instead packages the tokens up into a value and pushes that. `call` is what actually runs a block:
 
@@ -91,6 +91,15 @@ There's also `:name`, which is shorthand for `@name call`. Saves typing the same
 ```
 5 3 > { 100 } { -100 } ifelse print
 > 100
+```
+
+`while` is an `if` operation that continues to call its body for as long as the condition block pushes true boolean.
+
+```
+5 $i
+{ @i 0 > }             ; condition
+{ @i print @i 1 - $i}  ; body
+while
 ```
 
 Since a block is just a value like anything else, you can stash one in a variable and get functions out of it for free, including the recursive ones:

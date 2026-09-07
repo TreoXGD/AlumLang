@@ -209,6 +209,19 @@ pub const Interpreter = struct {
 
                         if (cond) try self.callBlock(then_branch);
                     },
+                    .@"while" => {
+                        const body = try (try self.popOrError()).isBlock();
+                        const cond = try (try self.popOrError()).isBlock();
+
+                        while (true) {
+                            try self.callBlock(cond);
+
+                            const result = try (try self.popOrError()).isBool();
+                            if (!result) break;
+
+                            try self.callBlock(body);
+                        }
+                    },
                     // unary
                     .neg, .abs => {
                         const num = try (try self.popOrError()).isNumber();
@@ -292,6 +305,7 @@ pub const Interpreter = struct {
                             \\call - pops 1, executes the value only if it is a block and errors otherwise
                             \\if - pops 2, executes the top block only if second-from-top bool is true
                             \\ifelse - pops 3, executes the second-from-top stack block only if third-from-top bool is true, top block otherwise
+                            \\while - pops 2, continues to execute the top block only if second-from-top block continues to return true boolean
                             \\dup - pushes a copy of the top
                             \\swap - swaps the 2 top values
                             \\drop - pops the top
