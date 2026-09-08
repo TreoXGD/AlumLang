@@ -911,3 +911,66 @@ test "comparison errors on a boolean operand" {
 
     try std.testing.expectError(EvalError.NotANumber, interp.eval(.{ .op = .equal }));
 }
+
+test "call operation" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    var body = [_]Token{ .{ .int = 5 }, .{ .int = 3 }, .{ .op = .plus } };
+    try interp.stack.append(interp.arena, .{ .block = &body });
+    try interp.eval(.{ .op = .call });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 8 }}, interp.stack.items);
+}
+
+test "if operation runs the block when true" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    var then_branch = [_]Token{.{ .int = 42 }};
+    try interp.stack.append(interp.arena, .{ .bool = true });
+    try interp.stack.append(interp.arena, .{ .block = &then_branch });
+    try interp.eval(.{ .op = .@"if" });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 42 }}, interp.stack.items);
+}
+
+test "ifelse operation runs the else block when false" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+
+    var then_branch = [_]Token{.{ .int = 1 }};
+    var else_branch = [_]Token{.{ .int = 2 }};
+    try interp.stack.append(interp.arena, .{ .bool = false });
+    try interp.stack.append(interp.arena, .{ .block = &then_branch });
+    try interp.stack.append(interp.arena, .{ .block = &else_branch });
+    try interp.eval(.{ .op = .ifelse });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
+}
+
+test "while operation loops until condition is false" {
+    var buf: [32]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var interp = Interpreter.init(std.testing.allocator, &w);
+    defer interp.stack.deinit(std.testing.allocator);
+    defer interp.var_dict.deinit(std.testing.allocator);
+
+    try interp.eval(.{ .int = 0 });
+    try interp.eval(.{ .set_var = "i" });
+
+    var cond = [_]Token{ .{ .get_var = "i" }, .{ .int = 3 }, .{ .op = .less } };
+    var body = [_]Token{ .{ .get_var = "i" }, .{ .int = 1 }, .{ .op = .plus }, .{ .set_var = "i" } };
+    try interp.stack.append(interp.arena, .{ .block = &cond });
+    try interp.stack.append(interp.arena, .{ .block = &body });
+    try interp.eval(.{ .op = .@"while" });
+    try interp.eval(.{ .get_var = "i" });
+
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 3 }}, interp.stack.items);
+}
