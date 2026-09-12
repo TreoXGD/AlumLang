@@ -1,4 +1,4 @@
-# RPNSL
+# Alum
 
 A small reverse-polish, stack-based language with its own REPL, written in Zig from scratch with no parsing and VM.
 
@@ -139,6 +139,14 @@ help       - prints all of this from inside the REPL
 
 `;` starts a comment, runs to the end of the line.
 
-## Disclaimer
+## Features to add
 
-This is not a serious project.
+[ ] Mark-and-Sweep Garbage Collector
+[ ] Array data type
+[ ] String data type
+[ ] Importing files
+[ ] File manipulation
+[ ] Better I/O operations
+[ ] Type check operations
+[ ] Taking command line arguments
+[ ] Better error reporting
