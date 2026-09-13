@@ -32,10 +32,12 @@ fn repl(init: std.process.Init) !void {
 
     var lexer = Lexer{ .arena = arena };
     var interpreter = try Interpreter.init(arena, stdout);
+    defer interpreter.deinit();
 
     loop: while (true) {
         // prompt part
-        if (is_tty) try stdout.print("{s}", .{if (interpreter.block_level == 0) "# " else "< "});
+        const prompt_string: u8 = if (interpreter.block_level != 0 or interpreter.data_stacks.items.len > 1) '<' else '#';
+        if (is_tty) try stdout.print("{c} ", .{prompt_string});
 
         try stdout.flush();
         const prompt = try stdin.takeDelimiter('\n') orelse break :loop;
@@ -74,9 +76,11 @@ fn repl(init: std.process.Init) !void {
                     EvalError.NotAFloat => stderr.writeAll("Unable to use arithmetic operation on a non-float value.\n"),
                     EvalError.NotABoolean => stderr.writeAll("Unable to use boolean operation on a non-boolean value.\n"),
                     EvalError.NotABlock => stderr.writeAll("Unable to use block invoking operations with a non-block value.\n"),
+                    EvalError.NotAnArray => stderr.writeAll("Unable to use array operations with a non-array value.\n"),
                     EvalError.NonValueTokenInArray => stderr.writeAll("Unable to have array element have no value.\n"),
                     EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
                     EvalError.UnmatchedRightBracket => stderr.writeAll("Found an unmatched ']' in code.\n"),
+                    EvalError.AccessOutsideArrayBounds => stderr.writeAll("Unable to get an element of array with index outside of array.\n"),
                     EvalError.CallStackOverflow => stderr.writeAll("Got over maximum allowed recursive calls.\n"),
                     EvalError.Quit => break :loop,
                 };

@@ -51,6 +51,13 @@ pub const Value = union(enum) {
         };
     }
 
+    pub fn isArray(self: Value) EvalError![]Value {
+        return switch (self) {
+            .array => |a| a,
+            else => EvalError.NotAnArray,
+        };
+    }
+
     pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try switch (self) {
             .int => |i| writer.print("{d}", .{i}),

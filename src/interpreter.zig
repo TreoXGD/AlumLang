@@ -106,6 +106,14 @@ pub const Interpreter = struct {
                             try self.callBlock(else_branch);
                         }
                     },
+                    .set => {
+                        const value = try self.popOrError();
+                        const index = try (try self.popOrError()).isInteger();
+                        const array = try (try self.popOrError()).isArray();
+
+                        if (index < 0 or index >= array.len) return EvalError.AccessOutsideArrayBounds;
+                        array[@intCast(index)] = value;
+                    },
                     // binary
                     .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
                         const rhs = try (try self.popOrError()).isNumber();
@@ -170,6 +178,13 @@ pub const Interpreter = struct {
                             try self.callBlock(body);
                         }
                     },
+                    .get => {
+                        const index = try (try self.popOrError()).isInteger();
+                        const array = try (try self.popOrError()).isArray();
+
+                        if (index < 0 or index >= array.len) return EvalError.AccessOutsideArrayBounds;
+                        try self.pushActive(array[@intCast(index)]);
+                    },
                     // unary
                     .neg, .abs => {
                         const num = try (try self.popOrError()).isNumber();
@@ -194,6 +209,11 @@ pub const Interpreter = struct {
 
                         try self.callBlock(block);
                     },
+                    .len => {
+                        const array = try (try self.popOrError()).isArray();
+
+                        try self.pushActive(.{ .int = @intCast(array.len) });
+                    },
                     .drop => _ = try self.popOrError(),
                     .print => try self.writer.print("> {f}\n", .{try self.popOrError()}),
                     .peek => try self.writer.print("| {f}\n", .{try self.peekAtOrError(0)}),
@@ -211,6 +231,7 @@ pub const Interpreter = struct {
                             while (i > 0) : (i -= 1) try self.writer.print("| {f}\n", .{self.getActive().items[i - 1]});
                         }
                     },
+                    .depth => try self.pushActive(.{ .int = @intCast(self.getActive().items.len) }),
                     .vars => {
                         if (self.var_dict.count() == 0) {
                             try self.writer.writeAll("||\n");
@@ -245,6 +266,12 @@ pub const Interpreter = struct {
                             \\|| - pops 2, pushes their boolean or
                             \\{ - starts a new block
                             \\} - ends the innermost block
+                            \\[ - starts a new array
+                            \\] - ends the innermost array
+                            \\set - pops 3, sets the array's (third-from-top) element to value (top) at index (second-from-top)
+                            \\get - pops 2, pushes the arrays's (second-from-top) element at index (top)
+                            \\len - pops 1, pushes length of array
+                            \\depth - pushes the number of values in active stack
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
                             \\:(ident) - pushes block value of defined (ident) variable onto the stack and executes it
