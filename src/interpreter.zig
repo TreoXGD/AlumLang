@@ -7,80 +7,9 @@ const tok = @import("./token.zig");
 const Token = tok.Token;
 const OpType = tok.OpType;
 
-pub const EvalError = error{
-    StackUnderflow,
-    DivisionByZero,
-    WriteFailed,
-    OverflowOnCommand,
-    InvalidFloat,
-    UndefinedVariable,
-    UnmatchedRightBrace,
-    NotANumber,
-    NotAnInteger,
-    NotAFloat,
-    NotABlock,
-    NotABoolean,
-    CallStackOverflow,
-    Quit,
-} || Allocator.Error;
+const EvalError = @import("./errors.zig").EvalError;
 
-pub const Value = union(enum) {
-    int: i32,
-    float: f64,
-    bool: bool,
-    block: []Token,
-
-    fn isNumber(self: Value) EvalError!Value {
-        return switch (self) {
-            .int, .float => self,
-            else => EvalError.NotANumber,
-        };
-    }
-
-    fn isInteger(self: Value) EvalError!i32 {
-        return switch (self) {
-            .int => |i| i,
-            else => EvalError.NotAnInteger,
-        };
-    }
-
-    fn isFloat(self: Value) EvalError!f64 {
-        return switch (self) {
-            .float => |f| f,
-            else => EvalError.NotAFloat,
-        };
-    }
-
-    fn isBool(self: Value) EvalError!bool {
-        return switch (self) {
-            .bool => |b| b,
-            else => EvalError.NotABoolean,
-        };
-    }
-
-    fn isBlock(self: Value) EvalError![]Token {
-        return switch (self) {
-            .block => |b| b,
-            else => EvalError.NotABlock,
-        };
-    }
-
-    pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try switch (self) {
-            .int => |i| writer.print("{d}", .{i}),
-            .float => |f| if (f == @floor(f)) writer.print("{d:.1}", .{f}) else writer.print("{d}", .{f}),
-            .bool => |b| writer.print("{}", .{b}),
-            .block => |b| {
-                try writer.writeAll("{ ");
-                for (b, 0..) |token, i| {
-                    if (i > 0) try writer.writeByte(' ');
-                    try writer.print("{f}", .{token});
-                }
-                try writer.writeAll(" }");
-            },
-        };
-    }
-};
+const Value = @import("./value.zig").Value;
 
 pub const Stack = Aligned(Value, null);
 
@@ -92,47 +21,66 @@ pub const Interpreter = struct {
     recursion_depth: u32 = 0,
     block_level: u32 = 0,
     block_contents: Aligned(Token, null) = .empty,
-    stack: Stack = .empty,
+    // a stack of data stacks for regular operations and array creation
+    data_stacks: Aligned(Stack, null) = .empty,
     var_dict: std.array_hash_map.String(Value) = .empty,
 
-    pub fn init(arena: Allocator, writer: *std.Io.Writer) Interpreter {
-        return .{
+    pub fn init(arena: Allocator, writer: *std.Io.Writer) EvalError!Interpreter {
+        var interpreter: Interpreter = .{
             .arena = arena,
             .writer = writer,
         };
+
+        // initialize global stack
+        try interpreter.begin_array();
+
+        return interpreter;
+    }
+
+    pub fn deinit(self: *Interpreter) void {
+        for (self.data_stacks.items) |*stack| {
+            stack.deinit(self.arena);
+        }
+        self.data_stacks.deinit(self.arena);
+
+        self.var_dict.deinit(self.arena);
+        self.block_contents.deinit(self.arena);
+    }
+
+    fn evalBlock(self: *Interpreter, token: Token) EvalError!void {
+        switch (token) {
+            .op => |op| {
+                if (op == .left_brace) self.block_level += 1;
+                if (op == .right_brace) self.block_level -= 1;
+            },
+            else => {},
+        }
+
+        if (self.block_level == 0) {
+            const block = try self.block_contents.toOwnedSlice(self.arena);
+            try self.pushActive(.{ .block = block });
+        } else {
+            try self.block_contents.append(self.arena, token);
+        }
     }
 
     pub fn eval(self: *Interpreter, token: Token) EvalError!void {
         if (self.block_level != 0) {
-            switch (token) {
-                .op => |op| {
-                    if (op == .left_brace) self.block_level += 1;
-                    if (op == .right_brace) self.block_level -= 1;
-                },
-                else => {},
-            }
-
-            if (self.block_level == 0) {
-                const block = try self.block_contents.toOwnedSlice(self.arena);
-                try self.stack.append(self.arena, .{ .block = block });
-            } else {
-                try self.block_contents.append(self.arena, token);
-            }
-
+            try self.evalBlock(token);
             return;
         }
 
         switch (token) {
-            .int => |i| try self.stack.append(self.arena, .{ .int = i }),
-            .float => |f| try self.stack.append(self.arena, .{ .float = f }),
-            .bool => |b| try self.stack.append(self.arena, .{ .bool = b }),
+            .int => |i| try self.pushActive(.{ .int = i }),
+            .float => |f| try self.pushActive(.{ .float = f }),
+            .bool => |b| try self.pushActive(.{ .bool = b }),
             .set_var => |ident| {
                 const value = try self.popOrError();
                 try self.var_dict.put(self.arena, ident, value);
             },
             .get_var => |ident| {
                 if (self.var_dict.get(ident)) |value| {
-                    try self.stack.append(self.arena, value);
+                    try self.pushActive(value);
                 } else return EvalError.UndefinedVariable;
             },
             .op => |op| {
@@ -143,9 +91,9 @@ pub const Interpreter = struct {
                         const middle = try self.popOrError();
                         const bottom = try self.popOrError();
 
-                        try self.stack.append(self.arena, middle);
-                        try self.stack.append(self.arena, top);
-                        try self.stack.append(self.arena, bottom);
+                        try self.pushActive(middle);
+                        try self.pushActive(top);
+                        try self.pushActive(bottom);
                     },
                     .ifelse => {
                         const else_branch = try (try self.popOrError()).isBlock();
@@ -165,7 +113,7 @@ pub const Interpreter = struct {
 
                         const result = try computeBin(op, lhs, rhs);
 
-                        try self.stack.append(self.arena, result);
+                        try self.pushActive(result);
                     },
                     .amp, .bar => {
                         const rhs = try (try self.popOrError()).isInteger();
@@ -177,7 +125,7 @@ pub const Interpreter = struct {
                             else => unreachable,
                         };
 
-                        try self.stack.append(self.arena, result);
+                        try self.pushActive(result);
                     },
                     .amp_amp, .bar_bar => {
                         const rhs = try (try self.popOrError()).isBool();
@@ -189,19 +137,19 @@ pub const Interpreter = struct {
                             else => unreachable,
                         };
 
-                        try self.stack.append(self.arena, result);
+                        try self.pushActive(result);
                     },
                     .swap => {
                         const rhs = try self.popOrError();
                         const lhs = try self.popOrError();
 
-                        try self.stack.append(self.arena, rhs);
-                        try self.stack.append(self.arena, lhs);
+                        try self.pushActive(rhs);
+                        try self.pushActive(lhs);
                     },
                     .over => {
                         // second from top
                         const second = try self.peekAtOrError(1);
-                        try self.stack.append(self.arena, second);
+                        try self.pushActive(second);
                     },
                     .@"if" => {
                         const then_branch = try (try self.popOrError()).isBlock();
@@ -228,37 +176,39 @@ pub const Interpreter = struct {
 
                         const result = try computeUnary(op, num);
 
-                        try self.stack.append(self.arena, result);
+                        try self.pushActive(result);
                     },
                     .not => {
                         const val = try (try self.popOrError()).isBool();
 
-                        try self.stack.append(self.arena, .{ .bool = !val });
+                        try self.pushActive(.{ .bool = !val });
                     },
                     .dup => {
                         const num = try self.popOrError();
 
-                        try self.stack.append(self.arena, num);
-                        try self.stack.append(self.arena, num);
+                        try self.pushActive(num);
+                        try self.pushActive(num);
                     },
                     .call => {
                         const block = try (try self.popOrError()).isBlock();
 
                         try self.callBlock(block);
                     },
-                    .left_brace => self.block_level += 1,
-                    .right_brace => return EvalError.UnmatchedRightBrace,
                     .drop => _ = try self.popOrError(),
                     .print => try self.writer.print("> {f}\n", .{try self.popOrError()}),
                     .peek => try self.writer.print("| {f}\n", .{try self.peekAtOrError(0)}),
                     // no argument
-                    .clear => self.stack.clearRetainingCapacity(),
+                    .left_brace => self.block_level += 1,
+                    .right_brace => return EvalError.UnmatchedRightBrace,
+                    .left_bracket => try self.begin_array(),
+                    .right_bracket => if (self.data_stacks.items.len > 1) try self.end_array() else return EvalError.UnmatchedRightBracket,
+                    .clear => self.getActive().clearRetainingCapacity(),
                     .stack => {
-                        if (self.stack.items.len == 0) {
+                        if (self.getActive().items.len == 0) {
                             try self.writer.writeAll("|\n");
                         } else {
-                            var i = self.stack.items.len;
-                            while (i > 0) : (i -= 1) try self.writer.print("| {f}\n", .{self.stack.items[i - 1]});
+                            var i = self.getActive().items.len;
+                            while (i > 0) : (i -= 1) try self.writer.print("| {f}\n", .{self.getActive().items[i - 1]});
                         }
                     },
                     .vars => {
@@ -429,87 +379,107 @@ pub const Interpreter = struct {
         };
     }
 
+    fn begin_array(self: *Interpreter) EvalError!void {
+        try self.data_stacks.append(self.arena, .empty);
+    }
+
+    fn end_array(self: *Interpreter) EvalError!void {
+        var contents = self.data_stacks.pop().?;
+
+        const array: Value = .{ .array = try contents.toOwnedSlice(self.arena) };
+
+        try self.pushActive(array);
+    }
+
+    fn pushActive(self: *Interpreter, value: Value) EvalError!void {
+        try self.getActive().append(self.arena, value);
+    }
+
+    fn getActive(self: *Interpreter) *Stack {
+        return &self.data_stacks.items[self.data_stacks.items.len - 1];
+    }
+
     fn peekAtOrError(self: *Interpreter, depth: usize) EvalError!Value {
-        if (depth >= self.stack.items.len) return EvalError.StackUnderflow;
-        return self.stack.items[self.stack.items.len - 1 - depth];
+        if (depth >= self.getActive().items.len) return EvalError.StackUnderflow;
+        return self.getActive().items[self.getActive().items.len - 1 - depth];
     }
 
     fn popOrError(self: *Interpreter) EvalError!Value {
-        return self.stack.pop() orelse return EvalError.StackUnderflow;
+        return self.getActive().pop() orelse return EvalError.StackUnderflow;
     }
 };
 
 test "rot operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .op = .rot });
 
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 2 }, .{ .int = 3 }, .{ .int = 1 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 2 }, .{ .int = 3 }, .{ .int = 1 } }, interp.getActive().items);
 }
 
 test "add operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .op = .plus });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.getActive().items);
 }
 
 test "sub operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 10 });
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .op = .minus });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 7 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 7 }}, interp.getActive().items);
 }
 
 test "mul operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 4 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .star });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 20 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 20 }}, interp.getActive().items);
 }
 
 test "div operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 20 });
     try interp.eval(.{ .int = 4 });
     try interp.eval(.{ .op = .slash });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.getActive().items);
 }
 
 test "div operation with division by zero" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 0 });
@@ -520,21 +490,21 @@ test "div operation with division by zero" {
 test "mod operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = -7 });
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .op = .percent });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = -1 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = -1 }}, interp.getActive().items);
 }
 
 test "mod operation with division by zero" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 0 });
@@ -545,175 +515,175 @@ test "mod operation with division by zero" {
 test "neg operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .neg });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = -5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = -5 }}, interp.getActive().items);
 }
 
 test "abs operation on negative" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = -5 });
     try interp.eval(.{ .op = .abs });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.getActive().items);
 }
 
 test "abs operation on positive" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 7 });
     try interp.eval(.{ .op = .abs });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 7 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 7 }}, interp.getActive().items);
 }
 
 test "min operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .min });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.getActive().items);
 }
 
 test "max operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .int = 9 });
     try interp.eval(.{ .op = .max });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 9 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 9 }}, interp.getActive().items);
 }
 
 test "dup operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 7 });
     try interp.eval(.{ .op = .dup });
 
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 } }, interp.getActive().items);
 }
 
 test "swap operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .swap });
 
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 2 }, .{ .int = 1 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 2 }, .{ .int = 1 } }, interp.getActive().items);
 }
 
 test "over operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .over });
 
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 1 }, .{ .int = 2 }, .{ .int = 1 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 1 }, .{ .int = 2 }, .{ .int = 1 } }, interp.getActive().items);
 }
 
 test "drop operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .drop });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 1 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 1 }}, interp.getActive().items);
 }
 
 test "clear operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .int = 3 });
     try interp.eval(.{ .op = .clear });
 
-    try std.testing.expectEqual(0, interp.stack.items.len);
+    try std.testing.expectEqual(0, interp.getActive().items.len);
 }
 
 test "print operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .print });
 
     try std.testing.expectEqualStrings("> 5\n", w.buffer[0..w.end]);
-    try std.testing.expectEqual(0, interp.stack.items.len);
+    try std.testing.expectEqual(0, interp.getActive().items.len);
 }
 
 test "peek operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .peek });
 
     try std.testing.expectEqualStrings("| 5\n", w.buffer[0..w.end]);
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.getActive().items);
 }
 
 test "stack operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
     try interp.eval(.{ .op = .stack });
 
     try std.testing.expectEqualStrings("| 2\n| 1\n", w.buffer[0..w.end]);
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 1 }, .{ .int = 2 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 1 }, .{ .int = 2 } }, interp.getActive().items);
 }
 
 test "quit operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try std.testing.expectError(EvalError.Quit, interp.eval(.{ .op = .quit }));
 }
@@ -721,86 +691,86 @@ test "quit operation" {
 test "less than operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 4 });
     try interp.eval(.{ .op = .less });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.getActive().items);
 }
 
 test "less than or equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .less_equal });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.getActive().items);
 }
 
 test "greater than operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .float = 5.1 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .greater });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.getActive().items);
 }
 
 test "greater than or equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .greater_equal });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.getActive().items);
 }
 
 test "equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .equal });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = true }}, interp.getActive().items);
 }
 
 test "not equal operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .op = .not_equal });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .bool = false }}, interp.getActive().items);
 }
 
 test "mul operation with float overflow" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .float = std.math.floatMax(f64) });
     try interp.eval(.{ .float = 2.0 });
@@ -820,11 +790,11 @@ test "Value.format" {
 test "arithmetic errors on non-numeric value" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
-    try interp.stack.append(interp.arena, .{ .bool = true });
-    try interp.stack.append(interp.arena, .{ .int = 1 });
+    try interp.pushActive(.{ .bool = true });
+    try interp.pushActive(.{ .int = 1 });
 
     try std.testing.expectError(EvalError.NotANumber, interp.eval(.{ .op = .plus }));
 }
@@ -832,23 +802,21 @@ test "arithmetic errors on non-numeric value" {
 test "set var and get var operations" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
     try interp.eval(.{ .set_var = "x" });
     try interp.eval(.{ .get_var = "x" });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 5 }}, interp.getActive().items);
 }
 
 test "get var errors on undefined variable" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try std.testing.expectError(EvalError.UndefinedVariable, interp.eval(.{ .get_var = "x" }));
 }
@@ -856,9 +824,8 @@ test "get var errors on undefined variable" {
 test "set var overwrites an existing variable" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .set_var = "x" });
@@ -866,15 +833,14 @@ test "set var overwrites an existing variable" {
     try interp.eval(.{ .set_var = "x" });
     try interp.eval(.{ .get_var = "x" });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.getActive().items);
 }
 
 test "variable name matching a keyword doesn't collide with it" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 99 });
     try interp.eval(.{ .set_var = "dup" });
@@ -882,14 +848,14 @@ test "variable name matching a keyword doesn't collide with it" {
     try interp.eval(.{ .op = .dup });
     try interp.eval(.{ .get_var = "dup" });
 
-    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 }, .{ .int = 99 } }, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .int = 7 }, .{ .int = 7 }, .{ .int = 99 } }, interp.getActive().items);
 }
 
 test "not operator errors on non-boolean" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
 
@@ -899,8 +865,8 @@ test "not operator errors on non-boolean" {
 test "comparison errors on a boolean operand" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
     try interp.eval(.{ .int = 2 });
@@ -915,62 +881,61 @@ test "comparison errors on a boolean operand" {
 test "call operation" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     var body = [_]Token{ .{ .int = 5 }, .{ .int = 3 }, .{ .op = .plus } };
-    try interp.stack.append(interp.arena, .{ .block = &body });
+    try interp.pushActive(.{ .block = &body });
     try interp.eval(.{ .op = .call });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 8 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 8 }}, interp.getActive().items);
 }
 
 test "if operation runs the block when true" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     var then_branch = [_]Token{.{ .int = 42 }};
-    try interp.stack.append(interp.arena, .{ .bool = true });
-    try interp.stack.append(interp.arena, .{ .block = &then_branch });
+    try interp.pushActive(.{ .bool = true });
+    try interp.pushActive(.{ .block = &then_branch });
     try interp.eval(.{ .op = .@"if" });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 42 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 42 }}, interp.getActive().items);
 }
 
 test "ifelse operation runs the else block when false" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     var then_branch = [_]Token{.{ .int = 1 }};
     var else_branch = [_]Token{.{ .int = 2 }};
-    try interp.stack.append(interp.arena, .{ .bool = false });
-    try interp.stack.append(interp.arena, .{ .block = &then_branch });
-    try interp.stack.append(interp.arena, .{ .block = &else_branch });
+    try interp.pushActive(.{ .bool = false });
+    try interp.pushActive(.{ .block = &then_branch });
+    try interp.pushActive(.{ .block = &else_branch });
     try interp.eval(.{ .op = .ifelse });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 2 }}, interp.getActive().items);
 }
 
 test "while operation loops until condition is false" {
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = Interpreter.init(std.testing.allocator, &w);
-    defer interp.stack.deinit(std.testing.allocator);
-    defer interp.var_dict.deinit(std.testing.allocator);
+    var interp = try Interpreter.init(std.testing.allocator, &w);
+    defer interp.deinit();
 
     try interp.eval(.{ .int = 0 });
     try interp.eval(.{ .set_var = "i" });
 
     var cond = [_]Token{ .{ .get_var = "i" }, .{ .int = 3 }, .{ .op = .less } };
     var body = [_]Token{ .{ .get_var = "i" }, .{ .int = 1 }, .{ .op = .plus }, .{ .set_var = "i" } };
-    try interp.stack.append(interp.arena, .{ .block = &cond });
-    try interp.stack.append(interp.arena, .{ .block = &body });
+    try interp.pushActive(.{ .block = &cond });
+    try interp.pushActive(.{ .block = &body });
     try interp.eval(.{ .op = .@"while" });
     try interp.eval(.{ .get_var = "i" });
 
-    try std.testing.expectEqualSlices(Value, &.{.{ .int = 3 }}, interp.stack.items);
+    try std.testing.expectEqualSlices(Value, &.{.{ .int = 3 }}, interp.getActive().items);
 }

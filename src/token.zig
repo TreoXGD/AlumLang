@@ -15,6 +15,8 @@ pub const OpType = enum {
     not,
     left_brace,
     right_brace,
+    left_bracket,
+    right_bracket,
     amp,
     amp_amp,
     bar,
@@ -82,6 +84,8 @@ pub const OpType = enum {
             .help => "help",
             .left_brace => "{",
             .right_brace => "}",
+            .left_bracket => "[",
+            .right_bracket => "]",
         };
     }
 
@@ -105,6 +109,8 @@ pub const OpType = enum {
             .bar_bar,
             .left_brace,
             .right_brace,
+            .left_bracket,
+            .right_bracket,
             => true,
             else => false,
         };

@@ -141,12 +141,12 @@ help       - prints all of this from inside the REPL
 
 ## Features to add
 
-[ ] Mark-and-Sweep Garbage Collector
-[ ] Array data type
-[ ] String data type
-[ ] Importing files
-[ ] File manipulation
-[ ] Better I/O operations
-[ ] Type check operations
-[ ] Taking command line arguments
-[ ] Better error reporting
+- [x] Array data type
+- [ ] String data type
+- [ ] Garbage collector
+- [ ] Importing files
+- [ ] File manipulation
+- [ ] Better I/O operations
+- [ ] Type check operations
+- [ ] Taking command line arguments
+- [ ] Better error reporting

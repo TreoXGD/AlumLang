@@ -1,7 +1,7 @@
 .{
     .name = .alum,
     .version = "0.0.0",
-    .fingerprint = 0x2c500542b40b95f8,
+    .fingerprint = 0x8258ed68f06249c7,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{

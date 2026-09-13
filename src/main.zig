@@ -5,11 +5,12 @@ const Aligned = std.array_list.Aligned;
 
 const lex = @import("./lexer.zig");
 const Lexer = lex.Lexer;
-const LexError = lex.LexError;
 
 const interp = @import("./interpreter.zig");
 const Interpreter = interp.Interpreter;
-const EvalError = interp.EvalError;
+
+const LexError = @import("./errors.zig").LexError;
+const EvalError = @import("./errors.zig").EvalError;
 
 fn repl(init: std.process.Init) !void {
     const arena: Allocator = init.arena.allocator();
@@ -30,7 +31,7 @@ fn repl(init: std.process.Init) !void {
     const stdin = &stdin_file_reader.interface;
 
     var lexer = Lexer{ .arena = arena };
-    var interpreter = Interpreter.init(arena, stdout);
+    var interpreter = try Interpreter.init(arena, stdout);
 
     loop: while (true) {
         // prompt part
@@ -73,7 +74,9 @@ fn repl(init: std.process.Init) !void {
                     EvalError.NotAFloat => stderr.writeAll("Unable to use arithmetic operation on a non-float value.\n"),
                     EvalError.NotABoolean => stderr.writeAll("Unable to use boolean operation on a non-boolean value.\n"),
                     EvalError.NotABlock => stderr.writeAll("Unable to use block invoking operations with a non-block value.\n"),
+                    EvalError.NonValueTokenInArray => stderr.writeAll("Unable to have array element have no value.\n"),
                     EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
+                    EvalError.UnmatchedRightBracket => stderr.writeAll("Found an unmatched ']' in code.\n"),
                     EvalError.CallStackOverflow => stderr.writeAll("Got over maximum allowed recursive calls.\n"),
                     EvalError.Quit => break :loop,
                 };

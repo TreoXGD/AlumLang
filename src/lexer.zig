@@ -7,16 +7,7 @@ const tok = @import("./token.zig");
 const Token = tok.Token;
 const OpType = tok.OpType;
 
-pub const LexError = error{
-    NotKeyword,
-    UnsupportedCharacter,
-    Overflow,
-    DecimalPointWithoutNumber,
-    GetVarWithoutValidVar,
-    SetVarWithoutValidVar,
-    CallVarWithoutValidVar,
-    EqualWithoutSecondEqual,
-} || Allocator.Error;
+const LexError = @import("./errors.zig").LexError;
 
 pub const TokenList = Aligned(Token, null);
 
@@ -46,7 +37,7 @@ pub const Lexer = struct {
                     '0'...'9' => {
                         continue :state .num;
                     },
-                    '+', '*', '/', '%', '<', '>', '=', '!', '&', '|', '{', '}' => continue :state .op,
+                    '+', '*', '/', '%', '<', '>', '=', '!', '&', '|', '{', '}', '[', ']' => continue :state .op,
                     '-' => {
                         if (!self.isAtEnd() and std.ascii.isDigit(self.peekAt(0))) continue :state .num;
 
@@ -90,6 +81,8 @@ pub const Lexer = struct {
                     '%' => .percent,
                     '{' => .left_brace,
                     '}' => .right_brace,
+                    '[' => .left_bracket,
+                    ']' => .right_bracket,
                     '<' => if (!self.isAtEnd() and self.matchAdvance('=')) .less_equal else .less,
                     '>' => if (!self.isAtEnd() and self.matchAdvance('=')) .greater_equal else .greater,
                     '=' => if (!self.isAtEnd() and self.matchAdvance('=')) .equal else return LexError.EqualWithoutSecondEqual,
