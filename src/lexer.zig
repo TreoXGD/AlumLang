@@ -12,7 +12,7 @@ const LexError = @import("./errors.zig").LexError;
 pub const TokenList = Aligned(Token, null);
 
 pub const Lexer = struct {
-    arena: Allocator,
+    allocator: Allocator,
     index: usize = 0,
     text: []const u8 = "",
 
@@ -25,7 +25,7 @@ pub const Lexer = struct {
         end,
     };
 
-    pub fn lex(self: *Lexer, text: []const u8) LexError!TokenList {
+    pub fn lex(self: *Lexer, text: []const u8, arena: Allocator) LexError!TokenList {
         var token_list: TokenList = .empty;
         self.index = 0;
         self.text = text;
@@ -52,11 +52,11 @@ pub const Lexer = struct {
                         const start_index = self.index;
                         while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
 
-                        const ident = try self.arena.dupe(u8, self.text[start_index..self.index]);
+                        const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
 
                         // syntactic sugar: :(ident) => @(ident) call
-                        try token_list.append(self.arena, .{ .get_var = ident });
-                        try token_list.append(self.arena, .{ .op = .call });
+                        try token_list.append(arena, .{ .get_var = ident });
+                        try token_list.append(arena, .{ .op = .call });
                         continue :state .start;
                     },
                     '@' => {
@@ -92,7 +92,7 @@ pub const Lexer = struct {
                     else => unreachable,
                 };
 
-                try token_list.append(self.arena, .{ .op = op });
+                try token_list.append(arena, .{ .op = op });
 
                 continue :state .start;
             },
@@ -113,14 +113,14 @@ pub const Lexer = struct {
                     }
                     const num = std.fmt.parseFloat(f64, text[start_index..self.index]) catch unreachable;
 
-                    try token_list.append(self.arena, .{ .float = num });
+                    try token_list.append(arena, .{ .float = num });
                 } else {
                     const num = std.fmt.parseInt(i32, text[start_index..self.index], 10) catch |err| switch (err) {
                         error.InvalidCharacter => unreachable,
                         error.Overflow => return LexError.Overflow,
                     };
 
-                    try token_list.append(self.arena, .{ .int = num });
+                    try token_list.append(arena, .{ .int = num });
                 }
 
                 continue :state .start;
@@ -134,7 +134,7 @@ pub const Lexer = struct {
                 // no support for non-keyword identifiers for now
                 const keyword = try strToKeyword(text[start_index..self.index]);
 
-                try token_list.append(self.arena, keyword);
+                try token_list.append(arena, keyword);
 
                 continue :state .start;
             },
@@ -142,14 +142,14 @@ pub const Lexer = struct {
                 const start_index = self.index;
                 while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
 
-                const ident = try self.arena.dupe(u8, self.text[start_index..self.index]);
+                const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
                 const token: Token = switch (self.text[start_index - 1]) {
                     '@' => .{ .get_var = ident },
                     '$' => .{ .set_var = ident },
                     else => unreachable,
                 };
 
-                try token_list.append(self.arena, token);
+                try token_list.append(arena, token);
 
                 continue :state .start;
             },

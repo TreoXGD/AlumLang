@@ -13,7 +13,7 @@ const LexError = @import("./errors.zig").LexError;
 const EvalError = @import("./errors.zig").EvalError;
 
 fn repl(init: std.process.Init) !void {
-    const arena: Allocator = init.arena.allocator();
+    const gpa: Allocator = init.gpa;
     const io = init.io;
     // stdout
     var stdout_buffer: [1024]u8 = undefined;
@@ -30,8 +30,8 @@ fn repl(init: std.process.Init) !void {
     var stdin_file_reader: Io.File.Reader = .init(stdin_file, io, &stdin_buffer);
     const stdin = &stdin_file_reader.interface;
 
-    var lexer = Lexer{ .arena = arena };
-    var interpreter = try Interpreter.init(arena, stdout);
+    var lexer = Lexer{ .allocator = gpa };
+    var interpreter = try Interpreter.init(gpa, stdout);
     defer interpreter.deinit();
 
     loop: while (true) {
@@ -42,8 +42,13 @@ fn repl(init: std.process.Init) !void {
         try stdout.flush();
         const prompt = try stdin.takeDelimiter('\n') orelse break :loop;
 
+        // per-line arena for temp allocations
+        var arena_allocator = std.heap.ArenaAllocator.init(gpa);
+        defer arena_allocator.deinit();
+        const arena = arena_allocator.allocator();
+
         // reading
-        var token_list = lexer.lex(prompt) catch |err| {
+        var token_list = lexer.lex(prompt, arena) catch |err| {
             try switch (err) {
                 LexError.UnsupportedCharacter => stderr.writeAll("Unsupported character found in line.\n"),
                 LexError.NotKeyword => stderr.writeAll("The used identifier is not an already used keyword.\n"),
@@ -88,6 +93,18 @@ fn repl(init: std.process.Init) !void {
                 continue :loop;
             };
             try stdout.flush();
+        }
+
+        if (interpreter.gc.obj_list.items.len > interpreter.gc.obj_threshold) {
+            interpreter.gcTryCollect();
+
+            interpreter.gc.obj_threshold = interpreter.gc.obj_list.items.len * 2;
+
+            if (interpreter.gc.obj_threshold < 128) interpreter.gc.obj_threshold = 128;
+        }
+
+        for (interpreter.gc.obj_list.items) |value| {
+            std.debug.print("GC: {f}\n", .{value.*});
         }
     }
 }

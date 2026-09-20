@@ -7,9 +7,15 @@ const tok = @import("./token.zig");
 const Token = tok.Token;
 const OpType = tok.OpType;
 
+const GC = @import("gc.zig").GC;
+
 const EvalError = @import("./errors.zig").EvalError;
 
-const Value = @import("./value.zig").Value;
+const v = @import("./value.zig");
+const Value = v.Value;
+
+const GcObject = v.GcObject;
+const GcObjectValue = v.GcObjectValue;
 
 pub const Stack = Aligned(Value, null);
 
@@ -24,11 +30,13 @@ pub const Interpreter = struct {
     // a stack of data stacks for regular operations and array creation
     data_stacks: Aligned(Stack, null) = .empty,
     var_dict: std.array_hash_map.String(Value) = .empty,
+    gc: GC,
 
     pub fn init(arena: Allocator, writer: *std.Io.Writer) EvalError!Interpreter {
         var interpreter: Interpreter = .{
             .arena = arena,
             .writer = writer,
+            .gc = GC.init(arena),
         };
 
         // initialize global stack
@@ -38,13 +46,27 @@ pub const Interpreter = struct {
     }
 
     pub fn deinit(self: *Interpreter) void {
+        // deallocate the stacks
         for (self.data_stacks.items) |*stack| {
             stack.deinit(self.arena);
         }
         self.data_stacks.deinit(self.arena);
 
+        // deallocate the variable dictionary
+        self.deinitVars();
         self.var_dict.deinit(self.arena);
+
+        // deallocate any in-progress blocks
         self.block_contents.deinit(self.arena);
+
+        self.gc.deinit();
+    }
+
+    fn deinitVars(self: *Interpreter) void {
+        var iterator = self.var_dict.iterator();
+        while (iterator.next()) |entry| {
+            self.arena.free(entry.key_ptr.*);
+        }
     }
 
     fn evalBlock(self: *Interpreter, token: Token) EvalError!void {
@@ -185,6 +207,19 @@ pub const Interpreter = struct {
                         if (index < 0 or index >= array.len) return EvalError.AccessOutsideArrayBounds;
                         try self.pushActive(array[@intCast(index)]);
                     },
+                    .array => {
+                        const value = try self.popOrError();
+                        const elem_count = try (try self.popOrError()).isInteger();
+
+                        const count: usize = @intCast(elem_count);
+
+                        const array: GcObjectValue = .{ .array = try self.arena.alloc(Value, count) };
+                        @memset(array.array, value);
+
+                        const obj = try self.gc.allocObject(array);
+
+                        try self.pushActive(.{ .object = obj });
+                    },
                     // unary
                     .neg, .abs => {
                         const num = try (try self.popOrError()).isNumber();
@@ -242,7 +277,10 @@ pub const Interpreter = struct {
                             }
                         }
                     },
-                    .varclear => self.var_dict.clearRetainingCapacity(),
+                    .varclear => {
+                        self.deinitVars();
+                        self.var_dict.clearRetainingCapacity();
+                    },
                     .quit => return EvalError.Quit,
                     .help => {
                         const help_commands =
@@ -271,6 +309,7 @@ pub const Interpreter = struct {
                             \\set - pops 3, sets the array's (third-from-top) element to value (top) at index (second-from-top)
                             \\get - pops 2, pushes the arrays's (second-from-top) element at index (top)
                             \\len - pops 1, pushes length of array
+                            \\array - pops 2, pushes new array of length top value with same second-from-top value (shallow copy)
                             \\depth - pushes the number of values in active stack
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
@@ -406,6 +445,22 @@ pub const Interpreter = struct {
         };
     }
 
+    pub fn gcTryCollect(self: *Interpreter) void {
+        // mark stack objects
+        for (self.data_stacks.items) |stack| {
+            for (stack.items) |val| {
+                GC.markValue(val);
+            }
+        }
+        // marks variable objects
+        const values = self.var_dict.values();
+        for (values) |val| {
+            GC.markValue(val);
+        }
+
+        self.gc.sweepObjects();
+    }
+
     fn begin_array(self: *Interpreter) EvalError!void {
         try self.data_stacks.append(self.arena, .empty);
     }
@@ -413,9 +468,11 @@ pub const Interpreter = struct {
     fn end_array(self: *Interpreter) EvalError!void {
         var contents = self.data_stacks.pop().?;
 
-        const array: Value = .{ .array = try contents.toOwnedSlice(self.arena) };
+        const array: GcObjectValue = .{ .array = try contents.toOwnedSlice(self.arena) };
 
-        try self.pushActive(array);
+        const obj = try self.gc.allocObject(array);
+
+        try self.pushActive(.{ .object = obj });
     }
 
     fn pushActive(self: *Interpreter, value: Value) EvalError!void {

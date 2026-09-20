@@ -14,7 +14,7 @@ pub const Value = union(enum) {
     float: f64,
     bool: bool,
     block: []Token,
-    array: []Value,
+    object: *GcObject,
 
     pub fn isNumber(self: Value) EvalError!Value {
         return switch (self) {
@@ -53,16 +53,23 @@ pub const Value = union(enum) {
 
     pub fn isArray(self: Value) EvalError![]Value {
         return switch (self) {
-            .array => |a| a,
+            .object => |o| o.isArray(),
             else => EvalError.NotAnArray,
         };
     }
 
+    pub fn isString(self: Value) EvalError!*[]const u8 {
+        return switch (self) {
+            .object => |o| o.isString(),
+            else => EvalError.NotAString,
+        };
+    }
+
     pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try switch (self) {
-            .int => |i| writer.print("{d}", .{i}),
-            .float => |f| if (f == @floor(f)) writer.print("{d:.1}", .{f}) else writer.print("{d}", .{f}),
-            .bool => |b| writer.print("{}", .{b}),
+        switch (self) {
+            .int => |i| try writer.print("{d}", .{i}),
+            .float => |f| if (f == @floor(f)) try writer.print("{d:.1}", .{f}) else try writer.print("{d}", .{f}),
+            .bool => |b| try writer.print("{}", .{b}),
             .block => |b| {
                 try writer.writeAll("{ ");
                 for (b, 0..) |token, i| {
@@ -71,6 +78,47 @@ pub const Value = union(enum) {
                 }
                 try writer.writeAll(" }");
             },
+            .object => |o| {
+                try writer.print("{f}", .{o});
+            },
+        }
+    }
+};
+
+pub const GcObject = struct {
+    value: GcObjectValue,
+    is_marked: bool,
+
+    pub fn deinit(self: *GcObject, allocator: Allocator) void {
+        switch (self.value) {
+            .array => |a| {
+                for (a) |value| {
+                    if (value == .object) value.object.deinit(allocator);
+                }
+                allocator.free(a);
+            },
+            .string => |s| allocator.free(s),
+        }
+
+        allocator.destroy(self);
+    }
+
+    pub fn isArray(self: GcObject) EvalError![]Value {
+        return switch (self.value) {
+            .array => |a| a,
+            else => EvalError.NotAnArray,
+        };
+    }
+
+    // pub fn isString(self: GcObject) EvalError![]const u8 {
+    //     return switch (self.value) {
+    //         .string => |s| s,
+    //         else => EvalError.NotAString,
+    //     };
+    // }
+
+    pub fn format(self: GcObject, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self.value) {
             .array => |a| {
                 try writer.writeAll("[ ");
                 for (a, 0..) |val, i| {
@@ -79,6 +127,16 @@ pub const Value = union(enum) {
                 }
                 try writer.writeAll(" ]");
             },
-        };
+            .string => |s| {
+                try writer.writeAll("\"");
+                try writer.print("{s}", .{s});
+                try writer.writeAll("\"");
+            },
+        }
     }
+};
+
+pub const GcObjectValue = union(enum) {
+    array: []Value,
+    string: []const u8,
 };
