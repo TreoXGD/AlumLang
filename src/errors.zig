@@ -30,7 +30,6 @@ pub const EvalError = error{
     NotAnArray,
     NotAString,
     AccessOutsideArrayBounds,
-    NonValueTokenInArray,
     CallStackOverflow,
     Quit,
 } || Allocator.Error;
