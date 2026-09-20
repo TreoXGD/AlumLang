@@ -80,7 +80,11 @@ pub const Interpreter = struct {
 
         if (self.block_level == 0) {
             const block = try self.block_contents.toOwnedSlice(self.arena);
-            try self.pushActive(.{ .block = block });
+
+            const gc_value: GcObjectValue = .{ .block = block };
+            const gc_object = try self.gc.allocObject(gc_value);
+
+            try self.pushActive(.{ .object = gc_object });
         } else {
             try self.block_contents.append(self.arena, token);
         }
@@ -256,7 +260,15 @@ pub const Interpreter = struct {
                         try self.pushActive(.{ .int = @intCast(array.len) });
                     },
                     .drop => _ = try self.popOrError(),
-                    .print => try self.writer.print("> {f}\n", .{try self.popOrError()}),
+                    .debug => try self.writer.print("> {f}\n", .{try self.popOrError()}),
+                    .print => {
+                        const value = try self.popOrError();
+                        if (value.isString() catch null) |s| {
+                            try self.writer.print("{s}", .{s});
+                        } else {
+                            try self.writer.print("{f}", .{value});
+                        }
+                    },
                     .peek => try self.writer.print("| {f}\n", .{try self.peekAtOrError(0)}),
                     // no argument
                     .left_brace => self.block_level += 1,
@@ -287,6 +299,7 @@ pub const Interpreter = struct {
                         self.deinitVars();
                         self.var_dict.clearRetainingCapacity();
                     },
+                    .nl => try self.writer.print("\n", .{}),
                     .quit => return EvalError.Quit,
                     .help => {
                         const help_commands =

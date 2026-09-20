@@ -13,7 +13,6 @@ pub const Value = union(enum) {
     int: i32,
     float: f64,
     bool: bool,
-    block: []Token,
     object: *GcObject,
 
     pub fn isNumber(self: Value) EvalError!Value {
@@ -46,7 +45,7 @@ pub const Value = union(enum) {
 
     pub fn isBlock(self: Value) EvalError![]Token {
         return switch (self) {
-            .block => |b| b,
+            .object => |o| o.isBlock(),
             else => EvalError.NotABlock,
         };
     }
@@ -58,7 +57,7 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn isString(self: Value) EvalError!*[]const u8 {
+    pub fn isString(self: Value) EvalError![]const u8 {
         return switch (self) {
             .object => |o| o.isString(),
             else => EvalError.NotAString,
@@ -70,14 +69,6 @@ pub const Value = union(enum) {
             .int => |i| try writer.print("{d}", .{i}),
             .float => |f| if (f == @floor(f)) try writer.print("{d:.1}", .{f}) else try writer.print("{d}", .{f}),
             .bool => |b| try writer.print("{}", .{b}),
-            .block => |b| {
-                try writer.writeAll("{ ");
-                for (b, 0..) |token, i| {
-                    if (i > 0) try writer.writeByte(' ');
-                    try writer.print("{f}", .{token});
-                }
-                try writer.writeAll(" }");
-            },
             .object => |o| {
                 try writer.print("{f}", .{o});
             },
@@ -92,10 +83,15 @@ pub const GcObject = struct {
     pub fn deinit(self: *GcObject, allocator: Allocator) void {
         // does not need to have child elements freed since the GC frees them either way
         switch (self.value) {
-            .array => |a| {
-                allocator.free(a);
-            },
+            .array => |a| allocator.free(a),
             .string => |s| allocator.free(s),
+            .block => |b| {
+                // need to deallocate unused strings before deallocating the block itself
+                for (b) |tk| {
+                    if (tk == .string) allocator.free(tk.string);
+                }
+                allocator.free(b);
+            },
         }
 
         allocator.destroy(self);
@@ -115,6 +111,13 @@ pub const GcObject = struct {
         };
     }
 
+    pub fn isBlock(self: GcObject) EvalError![]Token {
+        return switch (self.value) {
+            .block => |b| b,
+            else => EvalError.NotABlock,
+        };
+    }
+
     pub fn format(self: GcObject, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.value) {
             .array => |a| {
@@ -130,6 +133,14 @@ pub const GcObject = struct {
                 try writer.print("{s}", .{s});
                 try writer.writeAll("\"");
             },
+            .block => |b| {
+                try writer.writeAll("{ ");
+                for (b, 0..) |token, i| {
+                    if (i > 0) try writer.writeByte(' ');
+                    try writer.print("{f}", .{token});
+                }
+                try writer.writeAll(" }");
+            },
         }
     }
 };
@@ -137,4 +148,5 @@ pub const GcObject = struct {
 pub const GcObjectValue = union(enum) {
     array: []Value,
     string: []const u8,
+    block: []Token,
 };

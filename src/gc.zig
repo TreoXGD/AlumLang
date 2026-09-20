@@ -61,6 +61,7 @@ pub const GC = struct {
             .array => |a| {
                 for (a) |item| markValue(item);
             },
+            .block => {},
             .string => {},
         }
     }
