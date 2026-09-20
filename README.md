@@ -142,7 +142,7 @@ help       - prints all of this from inside the REPL
 ## Features to add
 
 - [x] Array data type
-- [ ] String data type
+- [x] String data type
 - [x] Garbage collector
 - [ ] Importing files
 - [ ] File manipulation
