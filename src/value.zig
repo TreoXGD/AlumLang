@@ -90,11 +90,9 @@ pub const GcObject = struct {
     is_marked: bool,
 
     pub fn deinit(self: *GcObject, allocator: Allocator) void {
+        // does not need to have child elements freed since the GC frees them either way
         switch (self.value) {
             .array => |a| {
-                for (a) |value| {
-                    if (value == .object) value.object.deinit(allocator);
-                }
                 allocator.free(a);
             },
             .string => |s| allocator.free(s),
@@ -110,12 +108,12 @@ pub const GcObject = struct {
         };
     }
 
-    // pub fn isString(self: GcObject) EvalError![]const u8 {
-    //     return switch (self.value) {
-    //         .string => |s| s,
-    //         else => EvalError.NotAString,
-    //     };
-    // }
+    pub fn isString(self: GcObject) EvalError![]const u8 {
+        return switch (self.value) {
+            .string => |s| s,
+            else => EvalError.NotAString,
+        };
+    }
 
     pub fn format(self: GcObject, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.value) {

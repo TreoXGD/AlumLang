@@ -82,6 +82,7 @@ fn repl(init: std.process.Init) !void {
                     EvalError.NotABoolean => stderr.writeAll("Unable to use boolean operation on a non-boolean value.\n"),
                     EvalError.NotABlock => stderr.writeAll("Unable to use block invoking operations with a non-block value.\n"),
                     EvalError.NotAnArray => stderr.writeAll("Unable to use array operations with a non-array value.\n"),
+                    EvalError.NotAString => stderr.writeAll("Unable to use string operations with a non-string value.\n"),
                     EvalError.NonValueTokenInArray => stderr.writeAll("Unable to have array element have no value.\n"),
                     EvalError.UnmatchedRightBrace => stderr.writeAll("Found an unmatched '}' in code.\n"),
                     EvalError.UnmatchedRightBracket => stderr.writeAll("Found an unmatched ']' in code.\n"),

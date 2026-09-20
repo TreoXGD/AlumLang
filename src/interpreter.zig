@@ -309,7 +309,7 @@ pub const Interpreter = struct {
                             \\set - pops 3, sets the array's (third-from-top) element to value (top) at index (second-from-top)
                             \\get - pops 2, pushes the arrays's (second-from-top) element at index (top)
                             \\len - pops 1, pushes length of array
-                            \\array - pops 2, pushes new array of length top value with same second-from-top value (shallow copy)
+                            \\array - pops 2, pushes new array of length second-from-top value with same top value (shallow copy)
                             \\depth - pushes the number of values in active stack
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
@@ -884,9 +884,13 @@ test "arithmetic errors on non-numeric value" {
 }
 
 test "set var and get var operations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = try Interpreter.init(std.testing.allocator, &w);
+
+    var interp = try Interpreter.init(arena.allocator(), &w);
     defer interp.deinit();
 
     try interp.eval(.{ .int = 5 });
@@ -906,9 +910,12 @@ test "get var errors on undefined variable" {
 }
 
 test "set var overwrites an existing variable" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = try Interpreter.init(std.testing.allocator, &w);
+    var interp = try Interpreter.init(arena.allocator(), &w);
     defer interp.deinit();
 
     try interp.eval(.{ .int = 1 });
@@ -921,9 +928,12 @@ test "set var overwrites an existing variable" {
 }
 
 test "variable name matching a keyword doesn't collide with it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = try Interpreter.init(std.testing.allocator, &w);
+    var interp = try Interpreter.init(arena.allocator(), &w);
     defer interp.deinit();
 
     try interp.eval(.{ .int = 99 });
@@ -1006,9 +1016,12 @@ test "ifelse operation runs the else block when false" {
 }
 
 test "while operation loops until condition is false" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
     var buf: [32]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
-    var interp = try Interpreter.init(std.testing.allocator, &w);
+    var interp = try Interpreter.init(arena.allocator(), &w);
     defer interp.deinit();
 
     try interp.eval(.{ .int = 0 });

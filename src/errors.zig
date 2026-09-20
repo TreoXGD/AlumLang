@@ -27,6 +27,7 @@ pub const EvalError = error{
     NotABlock,
     NotABoolean,
     NotAnArray,
+    NotAString,
     AccessOutsideArrayBounds,
     NonValueTokenInArray,
     CallStackOverflow,

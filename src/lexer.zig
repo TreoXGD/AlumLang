@@ -20,7 +20,6 @@ pub const Lexer = struct {
         start,
         num,
         ident_op,
-        get_or_set_var,
         op,
         end,
     };
@@ -52,7 +51,7 @@ pub const Lexer = struct {
                         const start_index = self.index;
                         while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
 
-                        const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
+                        const ident = try arena.dupe(u8, self.text[start_index..self.index]);
 
                         // syntactic sugar: :(ident) => @(ident) call
                         try token_list.append(arena, .{ .get_var = ident });
@@ -61,11 +60,25 @@ pub const Lexer = struct {
                     },
                     '@' => {
                         if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.GetVarWithoutValidVar;
-                        continue :state .get_or_set_var;
+                        const start_index = self.index;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+
+                        const ident = try arena.dupe(u8, self.text[start_index..self.index]);
+
+                        try token_list.append(arena, .{ .get_var = ident });
+
+                        continue :state .start;
                     },
                     '$' => {
                         if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.SetVarWithoutValidVar;
-                        continue :state .get_or_set_var;
+                        const start_index = self.index;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+
+                        const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
+
+                        try token_list.append(arena, .{ .set_var = ident });
+
+                        continue :state .start;
                     },
                     ' ', '\t', '\r', '\n' => continue :state .start,
                     'a'...'z' => continue :state .ident_op,
@@ -138,21 +151,6 @@ pub const Lexer = struct {
 
                 continue :state .start;
             },
-            .get_or_set_var => {
-                const start_index = self.index;
-                while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
-
-                const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
-                const token: Token = switch (self.text[start_index - 1]) {
-                    '@' => .{ .get_var = ident },
-                    '$' => .{ .set_var = ident },
-                    else => unreachable,
-                };
-
-                try token_list.append(arena, token);
-
-                continue :state .start;
-            },
             .end => {},
         }
 
@@ -192,9 +190,12 @@ pub const Lexer = struct {
 };
 
 test "numbers and plus operator" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("3 4 +");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("3 4 +", arena.allocator());
 
     try std.testing.expectEqual(3, token_list.items.len);
     try std.testing.expectEqual(Token{ .int = 3 }, token_list.items[0]);
@@ -203,44 +204,59 @@ test "numbers and plus operator" {
 }
 
 test "comment with no trailing newline doesn't run off the buffer" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("-5 ; rest is ignored");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("-5 ; rest is ignored", arena.allocator());
 
     try std.testing.expectEqual(1, token_list.items.len);
     try std.testing.expectEqual(Token{ .int = -5 }, token_list.items[0]);
 }
 
 test "errors on bad input" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
 
-    try std.testing.expectError(LexError.UnsupportedCharacter, lexer.lex("?"));
-    try std.testing.expectError(LexError.NotKeyword, lexer.lex("foo"));
-    try std.testing.expectError(LexError.EqualWithoutSecondEqual, lexer.lex("="));
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    try std.testing.expectError(LexError.UnsupportedCharacter, lexer.lex("?", arena.allocator()));
+    try std.testing.expectError(LexError.NotKeyword, lexer.lex("foo", arena.allocator()));
+    try std.testing.expectError(LexError.EqualWithoutSecondEqual, lexer.lex("=", arena.allocator()));
 }
 
 test "float literal" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("2.5");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("2.5", arena.allocator());
 
     try std.testing.expectEqual(1, token_list.items.len);
     try std.testing.expectEqual(Token{ .float = 2.5 }, token_list.items[0]);
 }
 
 test "negative float literal" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("-2.5");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("-2.5", arena.allocator());
 
     try std.testing.expectEqual(1, token_list.items.len);
     try std.testing.expectEqual(Token{ .float = -2.5 }, token_list.items[0]);
 }
 
 test "mixed int and float" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("3 4.5 +");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("3 4.5 +", arena.allocator());
 
     try std.testing.expectEqual(3, token_list.items.len);
     try std.testing.expectEqual(Token{ .int = 3 }, token_list.items[0]);
@@ -249,31 +265,41 @@ test "mixed int and float" {
 }
 
 test "error on decimal point without digits" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
 
-    try std.testing.expectError(LexError.DecimalPointWithoutNumber, lexer.lex("3."));
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    try std.testing.expectError(LexError.DecimalPointWithoutNumber, lexer.lex("3.", arena.allocator()));
 }
 
 test "error on set variable without proper identifier" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
 
-    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$"));
-    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$-"));
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$", arena.allocator()));
+    try std.testing.expectError(LexError.SetVarWithoutValidVar, lexer.lex("$-", arena.allocator()));
 }
 
 test "error on get variable without proper identifier" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
 
-    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@"));
-    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@+"));
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@", arena.allocator()));
+    try std.testing.expectError(LexError.GetVarWithoutValidVar, lexer.lex("@+", arena.allocator()));
 }
 
 test "set var and get var operations" {
-    var arena_instance = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_instance.deinit();
-    var lexer = Lexer{ .arena = arena_instance.allocator() };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
 
-    const token_list = try lexer.lex("5 $x @x");
+    var lexer = Lexer{ .allocator = arena.allocator() };
+
+    const token_list = try lexer.lex("5 $x @x", arena.allocator());
 
     try std.testing.expectEqual(3, token_list.items.len);
     try std.testing.expectEqual(Token{ .int = 5 }, token_list.items[0]);
@@ -286,9 +312,12 @@ test "set var and get var operations" {
 }
 
 test "less than and less than or equal operators" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("< <=");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+
+    const token_list = try lexer.lex("< <=", arena.allocator());
 
     try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .less }, token_list.items[0]);
@@ -296,9 +325,11 @@ test "less than and less than or equal operators" {
 }
 
 test "greater than and greater than or equal operators" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("> >=");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+    const token_list = try lexer.lex("> >=", arena.allocator());
 
     try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .greater }, token_list.items[0]);
@@ -306,9 +337,11 @@ test "greater than and greater than or equal operators" {
 }
 
 test "equal and not equal operators" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("== !=");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+    const token_list = try lexer.lex("== !=", arena.allocator());
 
     try std.testing.expectEqual(2, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .equal }, token_list.items[0]);
@@ -316,9 +349,11 @@ test "equal and not equal operators" {
 }
 
 test "not equal operator without =" {
-    var lexer = Lexer{ .arena = std.testing.allocator };
-    var token_list = try lexer.lex("!");
-    defer token_list.deinit(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var lexer = Lexer{ .allocator = std.testing.allocator };
+    const token_list = try lexer.lex("!", arena.allocator());
 
     try std.testing.expectEqual(1, token_list.items.len);
     try std.testing.expectEqual(Token{ .op = .not }, token_list.items[0]);
