@@ -132,6 +132,7 @@ pub const Token = union(enum) {
     float: f64,
     bool: bool,
     op: OpType,
+    string: []const u8,
     set_var: []const u8,
     get_var: []const u8,
 
@@ -141,6 +142,7 @@ pub const Token = union(enum) {
             .float => |f| if (f == @floor(f)) try writer.print("{d:.1}", .{f}) else try writer.print("{d}", .{f}),
             .bool => |b| try writer.print("{}", .{b}),
             .op => |op| try writer.writeAll(op.opToStr()),
+            .string => |s| try writer.print("\"{s}\"", .{s}),
             .set_var => |v| try writer.print("${s}", .{v}),
             .get_var => |v| try writer.print("@{s}", .{v}),
         }

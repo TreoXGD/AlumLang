@@ -143,7 +143,7 @@ help       - prints all of this from inside the REPL
 
 - [x] Array data type
 - [ ] String data type
-- [ ] Garbage collector
+- [x] Garbage collector
 - [ ] Importing files
 - [ ] File manipulation
 - [ ] Better I/O operations

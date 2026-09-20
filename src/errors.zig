@@ -10,6 +10,7 @@ pub const LexError = error{
     SetVarWithoutValidVar,
     CallVarWithoutValidVar,
     EqualWithoutSecondEqual,
+    UnclosedString,
 } || Allocator.Error;
 
 pub const EvalError = error{

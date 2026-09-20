@@ -59,6 +59,7 @@ fn repl(init: std.process.Init) !void {
                 LexError.SetVarWithoutValidVar => stderr.writeAll("The '$' symbol should have at least one alphabetic character.\n"),
                 LexError.CallVarWithoutValidVar => stderr.writeAll("The ':' symbol should have at least one alphabetic character.\n"),
                 LexError.EqualWithoutSecondEqual => stderr.writeAll("The '=' symbol should have another '=' after itself.\n"),
+                LexError.UnclosedString => stderr.writeAll("A string must close itself on the same line.\n"),
             };
             try stderr.flush();
             continue :loop;
@@ -102,10 +103,6 @@ fn repl(init: std.process.Init) !void {
             interpreter.gc.obj_threshold = interpreter.gc.obj_list.items.len * 2;
 
             if (interpreter.gc.obj_threshold < 128) interpreter.gc.obj_threshold = 128;
-        }
-
-        for (interpreter.gc.obj_list.items) |value| {
-            std.debug.print("GC: {f}\n", .{value.*});
         }
     }
 }

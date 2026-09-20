@@ -96,6 +96,12 @@ pub const Interpreter = struct {
             .int => |i| try self.pushActive(.{ .int = i }),
             .float => |f| try self.pushActive(.{ .float = f }),
             .bool => |b| try self.pushActive(.{ .bool = b }),
+            .string => |s| {
+                const gc_value: GcObjectValue = .{ .string = s };
+                const gc_object = try self.gc.allocObject(gc_value);
+
+                try self.pushActive(.{ .object = gc_object });
+            },
             .set_var => |ident| {
                 const value = try self.popOrError();
                 try self.var_dict.put(self.arena, ident, value);

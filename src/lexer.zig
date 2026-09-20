@@ -47,9 +47,10 @@ pub const Lexer = struct {
                         continue :state .start;
                     },
                     ':' => {
-                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.CallVarWithoutValidVar;
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.peekAt(0))) return LexError.CallVarWithoutValidVar;
+
                         const start_index = self.index;
-                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.peekAt(0))) self.index += 1;
 
                         const ident = try arena.dupe(u8, self.text[start_index..self.index]);
 
@@ -59,9 +60,10 @@ pub const Lexer = struct {
                         continue :state .start;
                     },
                     '@' => {
-                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.GetVarWithoutValidVar;
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.peekAt(0))) return LexError.GetVarWithoutValidVar;
+
                         const start_index = self.index;
-                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.peekAt(0))) self.index += 1;
 
                         const ident = try arena.dupe(u8, self.text[start_index..self.index]);
 
@@ -70,14 +72,34 @@ pub const Lexer = struct {
                         continue :state .start;
                     },
                     '$' => {
-                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.text[self.index])) return LexError.SetVarWithoutValidVar;
+                        if (self.isAtEnd() or !std.ascii.isAlphabetic(self.peekAt(0))) return LexError.SetVarWithoutValidVar;
+
                         const start_index = self.index;
-                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.text[self.index])) self.index += 1;
+                        while (!self.isAtEnd() and std.ascii.isAlphanumeric(self.peekAt(0))) self.index += 1;
 
                         const ident = try self.allocator.dupe(u8, self.text[start_index..self.index]);
 
                         try token_list.append(arena, .{ .set_var = ident });
 
+                        continue :state .start;
+                    },
+                    '\"' => {
+                        if (self.isAtEnd()) return LexError.UnclosedString;
+
+                        const start_index = self.index;
+                        while (!self.isAtEnd() and self.peekAt(0) != '\"') {
+                            if (self.peekAt(0) == '\n') return LexError.UnclosedString;
+                            self.index += 1;
+                        }
+
+                        if (self.isAtEnd()) return LexError.UnclosedString;
+
+                        const string = try self.allocator.dupe(u8, self.text[start_index..self.index]);
+
+                        // closing string
+                        self.index += 1;
+
+                        try token_list.append(arena, .{ .string = string });
                         continue :state .start;
                     },
                     ' ', '\t', '\r', '\n' => continue :state .start,
