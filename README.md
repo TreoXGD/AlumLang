@@ -1,4 +1,4 @@
-# Alum
+# Avum
 
 A small reverse-polish, stack-based language with its own REPL, written in Zig from scratch with no parsing and VM.
 
