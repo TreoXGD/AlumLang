@@ -22,7 +22,7 @@ pub const Stack = Aligned(Value, null);
 const max_recursion_depth = 1000;
 
 pub const Interpreter = struct {
-    arena: Allocator,
+    allocator: Allocator,
     writer: *std.Io.Writer,
     recursion_depth: u32 = 0,
     block_level: u32 = 0,
@@ -32,11 +32,11 @@ pub const Interpreter = struct {
     var_dict: std.array_hash_map.String(Value) = .empty,
     gc: GC,
 
-    pub fn init(arena: Allocator, writer: *std.Io.Writer) EvalError!Interpreter {
+    pub fn init(allocator: Allocator, writer: *std.Io.Writer) EvalError!Interpreter {
         var interpreter: Interpreter = .{
-            .arena = arena,
+            .allocator = allocator,
             .writer = writer,
-            .gc = GC.init(arena),
+            .gc = GC.init(allocator),
         };
 
         // initialize global stack
@@ -48,16 +48,16 @@ pub const Interpreter = struct {
     pub fn deinit(self: *Interpreter) void {
         // deallocate the stacks
         for (self.data_stacks.items) |*stack| {
-            stack.deinit(self.arena);
+            stack.deinit(self.allocator);
         }
-        self.data_stacks.deinit(self.arena);
+        self.data_stacks.deinit(self.allocator);
 
         // deallocate the variable dictionary
         self.deinitVars();
-        self.var_dict.deinit(self.arena);
+        self.var_dict.deinit(self.allocator);
 
         // deallocate any in-progress blocks
-        self.block_contents.deinit(self.arena);
+        self.block_contents.deinit(self.allocator);
 
         self.gc.deinit();
     }
@@ -65,7 +65,7 @@ pub const Interpreter = struct {
     fn deinitVars(self: *Interpreter) void {
         var iterator = self.var_dict.iterator();
         while (iterator.next()) |entry| {
-            self.arena.free(entry.key_ptr.*);
+            self.allocator.free(entry.key_ptr.*);
         }
     }
 
@@ -79,14 +79,14 @@ pub const Interpreter = struct {
         }
 
         if (self.block_level == 0) {
-            const block = try self.block_contents.toOwnedSlice(self.arena);
+            const block = try self.block_contents.toOwnedSlice(self.allocator);
 
             const gc_value: GcObjectValue = .{ .block = block };
             const gc_object = try self.gc.allocObject(gc_value);
 
             try self.pushActive(.{ .object = gc_object });
         } else {
-            try self.block_contents.append(self.arena, token);
+            try self.block_contents.append(self.allocator, token);
         }
     }
 
@@ -108,7 +108,7 @@ pub const Interpreter = struct {
             },
             .set_var => |ident| {
                 const value = try self.popOrError();
-                try self.var_dict.put(self.arena, ident, value);
+                try self.var_dict.put(self.allocator, ident, value);
             },
             .get_var => |ident| {
                 if (self.var_dict.get(ident)) |value| {
@@ -164,7 +164,7 @@ pub const Interpreter = struct {
                         }
 
                         var stack = self.data_stacks.pop().?;
-                        defer stack.deinit(self.arena);
+                        defer stack.deinit(self.allocator);
 
                         const result = stack.pop() orelse return EvalError.StackUnderflow;
                         try self.pushActive(result);
@@ -246,7 +246,7 @@ pub const Interpreter = struct {
 
                         const count: usize = @intCast(elem_count);
 
-                        const array: GcObjectValue = .{ .array = try self.arena.alloc(Value, count) };
+                        const array: GcObjectValue = .{ .array = try self.allocator.alloc(Value, count) };
                         @memset(array.array, value);
 
                         const obj = try self.gc.allocObject(array);
@@ -560,13 +560,13 @@ pub const Interpreter = struct {
     }
 
     fn beginArray(self: *Interpreter) EvalError!void {
-        try self.data_stacks.append(self.arena, .empty);
+        try self.data_stacks.append(self.allocator, .empty);
     }
 
     fn endArray(self: *Interpreter) EvalError!void {
         var contents = self.data_stacks.pop().?;
 
-        const array: GcObjectValue = .{ .array = try contents.toOwnedSlice(self.arena) };
+        const array: GcObjectValue = .{ .array = try contents.toOwnedSlice(self.allocator) };
 
         const obj = try self.gc.allocObject(array);
 
@@ -575,11 +575,11 @@ pub const Interpreter = struct {
 
     fn discardStack(self: *Interpreter) void {
         var stack = self.data_stacks.pop().?;
-        stack.deinit(self.arena);
+        stack.deinit(self.allocator);
     }
 
     fn pushActive(self: *Interpreter, value: Value) EvalError!void {
-        try self.getActive().append(self.arena, value);
+        try self.getActive().append(self.allocator, value);
     }
 
     fn getActive(self: *Interpreter) *Stack {
