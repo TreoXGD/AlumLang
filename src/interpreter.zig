@@ -153,6 +153,7 @@ pub const Interpreter = struct {
 
                         // making a scratch stack
                         try self.beginArray();
+                        errdefer self.discardStack();
 
                         try self.pushActive(init_value);
                         for (array) |value| {
@@ -160,7 +161,7 @@ pub const Interpreter = struct {
                             try self.callBlock(block);
 
                             const stack = self.data_stacks.getLast();
-                            if (stack.items.len != 1) return EvalError.InvalidReduceElementCount;
+                            if (stack.items.len != 1) return EvalError.BlockLeftWrongElementCount;
                         }
 
                         var stack = self.data_stacks.pop().?;
@@ -258,13 +259,14 @@ pub const Interpreter = struct {
                         const array = try (try self.popOrError()).isArray();
 
                         try self.beginArray();
+                        errdefer self.discardStack();
 
                         for (array, 1..) |value, i| {
                             try self.pushActive(value);
                             try self.callBlock(block);
 
                             const stack = self.data_stacks.getLast();
-                            if (stack.items.len != i) return EvalError.InvalidMapElementCount;
+                            if (stack.items.len != i) return EvalError.BlockLeftWrongElementCount;
                         }
 
                         try self.endArray();
@@ -282,7 +284,7 @@ pub const Interpreter = struct {
                             try self.callBlock(block);
 
                             const stack = self.data_stacks.getLast();
-                            if (stack.items.len != leftover_elements_count + 1) return EvalError.InvalidFilterElementCount;
+                            if (stack.items.len != leftover_elements_count + 1) return EvalError.BlockLeftWrongElementCount;
 
                             const boolean = try (try self.popOrError()).isBool();
                             if (boolean) {
@@ -306,7 +308,7 @@ pub const Interpreter = struct {
                             try self.callBlock(block);
 
                             const stack = self.data_stacks.getLast();
-                            if (stack.items.len != 0) return EvalError.InvalidEachElementCount;
+                            if (stack.items.len != 0) return EvalError.BlockLeftWrongElementCount;
                         }
                     },
                     // unary
@@ -409,6 +411,10 @@ pub const Interpreter = struct {
                             \\len - pops 1, pushes length of array
                             \\array - pops 2, pushes new array of length second-from-top value with same top value (shallow copy)
                             \\depth - pushes the number of values in active stack
+                            \\map - pops 2, pushes new array of block (top) applied to every element of array (second-from-top)
+                            \\filter - pops 2, pushes new array keeping elements of array (second-from-top) where block (top) leaves true
+                            \\reduce - pops 3, folds block (top) over every element of array (third-from-top) starting from init (second-from-top), pushes the result
+                            \\each - pops 2, runs block (top) once per element of array (second-from-top) for side effects only, pushes nothing
                             \\$(ident) - pops 1, defines a variable with popped value and (ident) name
                             \\@(ident) - pushes value of defined (ident) variable onto the stack
                             \\:(ident) - pushes block value of defined (ident) variable onto the stack and executes it

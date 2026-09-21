@@ -31,9 +31,6 @@ pub const EvalError = error{
     NotAString,
     AccessOutsideArrayBounds,
     CallStackOverflow,
-    InvalidReduceElementCount,
-    InvalidMapElementCount,
-    InvalidFilterElementCount,
-    InvalidEachElementCount,
+    BlockLeftWrongElementCount,
     Quit,
 } || Allocator.Error;
