@@ -40,7 +40,7 @@ pub const Interpreter = struct {
         };
 
         // initialize global stack
-        try interpreter.begin_array();
+        try interpreter.beginArray();
 
         return interpreter;
     }
@@ -146,6 +146,29 @@ pub const Interpreter = struct {
                         if (index < 0 or index >= array.len) return EvalError.AccessOutsideArrayBounds;
                         array[@intCast(index)] = value;
                     },
+                    .reduce => {
+                        const block = try (try self.popOrError()).isBlock();
+                        const init_value = try self.popOrError();
+                        const array = try (try self.popOrError()).isArray();
+
+                        // making a scratch stack
+                        try self.beginArray();
+
+                        try self.pushActive(init_value);
+                        for (array) |value| {
+                            try self.pushActive(value);
+                            try self.callBlock(block);
+
+                            const stack = self.data_stacks.getLast();
+                            if (stack.items.len != 1) return EvalError.InvalidReduceElementCount;
+                        }
+
+                        var stack = self.data_stacks.pop().?;
+                        defer stack.deinit(self.arena);
+
+                        const result = stack.pop() orelse return EvalError.StackUnderflow;
+                        try self.pushActive(result);
+                    },
                     // binary
                     .plus, .minus, .star, .slash, .percent, .min, .max, .less, .less_equal, .greater, .greater_equal, .equal, .not_equal => {
                         const rhs = try (try self.popOrError()).isNumber();
@@ -230,6 +253,62 @@ pub const Interpreter = struct {
 
                         try self.pushActive(.{ .object = obj });
                     },
+                    .map => {
+                        const block = try (try self.popOrError()).isBlock();
+                        const array = try (try self.popOrError()).isArray();
+
+                        try self.beginArray();
+
+                        for (array, 1..) |value, i| {
+                            try self.pushActive(value);
+                            try self.callBlock(block);
+
+                            const stack = self.data_stacks.getLast();
+                            if (stack.items.len != i) return EvalError.InvalidMapElementCount;
+                        }
+
+                        try self.endArray();
+                    },
+                    .filter => {
+                        const block = try (try self.popOrError()).isBlock();
+                        const array = try (try self.popOrError()).isArray();
+
+                        try self.beginArray();
+                        errdefer self.discardStack();
+
+                        var leftover_elements_count: usize = 0;
+                        for (array) |value| {
+                            try self.pushActive(value);
+                            try self.callBlock(block);
+
+                            const stack = self.data_stacks.getLast();
+                            if (stack.items.len != leftover_elements_count + 1) return EvalError.InvalidFilterElementCount;
+
+                            const boolean = try (try self.popOrError()).isBool();
+                            if (boolean) {
+                                try self.pushActive(value);
+                                leftover_elements_count += 1;
+                            }
+                        }
+
+                        try self.endArray();
+                    },
+                    .each => {
+                        const block = try (try self.popOrError()).isBlock();
+                        const array = try (try self.popOrError()).isArray();
+
+                        // making a scratch stack
+                        try self.beginArray();
+                        defer self.discardStack();
+
+                        for (array) |value| {
+                            try self.pushActive(value);
+                            try self.callBlock(block);
+
+                            const stack = self.data_stacks.getLast();
+                            if (stack.items.len != 0) return EvalError.InvalidEachElementCount;
+                        }
+                    },
                     // unary
                     .neg, .abs => {
                         const num = try (try self.popOrError()).isNumber();
@@ -273,8 +352,8 @@ pub const Interpreter = struct {
                     // no argument
                     .left_brace => self.block_level += 1,
                     .right_brace => return EvalError.UnmatchedRightBrace,
-                    .left_bracket => try self.begin_array(),
-                    .right_bracket => if (self.data_stacks.items.len > 1) try self.end_array() else return EvalError.UnmatchedRightBracket,
+                    .left_bracket => try self.beginArray(),
+                    .right_bracket => if (self.data_stacks.items.len > 1) try self.endArray() else return EvalError.UnmatchedRightBracket,
                     .clear => self.getActive().clearRetainingCapacity(),
                     .stack => {
                         if (self.getActive().items.len == 0) {
@@ -480,11 +559,11 @@ pub const Interpreter = struct {
         self.gc.sweepObjects();
     }
 
-    fn begin_array(self: *Interpreter) EvalError!void {
+    fn beginArray(self: *Interpreter) EvalError!void {
         try self.data_stacks.append(self.arena, .empty);
     }
 
-    fn end_array(self: *Interpreter) EvalError!void {
+    fn endArray(self: *Interpreter) EvalError!void {
         var contents = self.data_stacks.pop().?;
 
         const array: GcObjectValue = .{ .array = try contents.toOwnedSlice(self.arena) };
@@ -492,6 +571,11 @@ pub const Interpreter = struct {
         const obj = try self.gc.allocObject(array);
 
         try self.pushActive(.{ .object = obj });
+    }
+
+    fn discardStack(self: *Interpreter) void {
+        var stack = self.data_stacks.pop().?;
+        stack.deinit(self.arena);
     }
 
     fn pushActive(self: *Interpreter, value: Value) EvalError!void {

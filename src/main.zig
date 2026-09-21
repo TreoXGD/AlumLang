@@ -88,6 +88,10 @@ fn repl(init: std.process.Init) !void {
                     EvalError.UnmatchedRightBracket => stderr.writeAll("Found an unmatched ']' in code.\n"),
                     EvalError.AccessOutsideArrayBounds => stderr.writeAll("Unable to get an element of array with index outside of array.\n"),
                     EvalError.CallStackOverflow => stderr.writeAll("Got over maximum allowed recursive calls.\n"),
+                    EvalError.InvalidReduceElementCount => stderr.writeAll("Unable to properly reduce an array with different count of results than 1.\n"),
+                    EvalError.InvalidMapElementCount => stderr.writeAll("Unable to properly map an array to a new one with different count of elements.\n"),
+                    EvalError.InvalidFilterElementCount => stderr.writeAll("Unable to properly filter an array with different count of results than 1.\n"),
+                    EvalError.InvalidEachElementCount => stderr.writeAll("Unable to properly reduce an array with different count of results than 1.\n"),
                     EvalError.Quit => break :loop,
                 };
                 try stderr.flush();
