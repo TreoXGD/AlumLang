@@ -36,7 +36,7 @@ fn repl(init: std.process.Init) !void {
 
     loop: while (true) {
         // prompt part
-        const prompt_string: u8 = if (interpreter.block_level != 0 or interpreter.data_stacks.items.len > 1) '<' else '#';
+        const prompt_string: u8 = if (interpreter.block_level != 0 or interpreter.frame_stack.items.len > 1) '<' else '#';
         if (is_tty) try stdout.print("{c} ", .{prompt_string});
 
         try stdout.flush();

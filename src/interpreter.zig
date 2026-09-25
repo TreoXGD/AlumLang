@@ -17,7 +17,7 @@ const Value = v.Value;
 const GcObject = v.GcObject;
 const GcObjectValue = v.GcObjectValue;
 
-pub const Stack = Aligned(Value, null);
+pub const Frame = Aligned(Value, null);
 
 const max_recursion_depth = 1000;
 
@@ -27,8 +27,8 @@ pub const Interpreter = struct {
     recursion_depth: u32 = 0,
     block_level: u32 = 0,
     block_contents: Aligned(Token, null) = .empty,
-    // a stack of data stacks for regular operations and array creation
-    data_stacks: Aligned(Stack, null) = .empty,
+    // a stack of frames for regular operations and array creation
+    frame_stack: Aligned(Frame, null) = .empty,
     var_dict: std.array_hash_map.String(Value) = .empty,
     gc: GC,
 
@@ -39,18 +39,18 @@ pub const Interpreter = struct {
             .gc = GC.init(allocator),
         };
 
-        // initialize global stack
-        try interpreter.beginArray();
+        // initialize global stack frame
+        try interpreter.beginFrame();
 
         return interpreter;
     }
 
     pub fn deinit(self: *Interpreter) void {
-        // deallocate the stacks
-        for (self.data_stacks.items) |*stack| {
+        // deallocate the frame stack
+        for (self.frame_stack.items) |*stack| {
             stack.deinit(self.allocator);
         }
-        self.data_stacks.deinit(self.allocator);
+        self.frame_stack.deinit(self.allocator);
 
         // deallocate the variable dictionary
         self.deinitVars();
@@ -151,23 +151,22 @@ pub const Interpreter = struct {
                         const init_value = try self.popOrError();
                         const array = try (try self.popOrError()).isArray();
 
-                        // making a scratch stack
-                        try self.beginArray();
-                        errdefer self.discardStack();
+                        try self.beginFrame();
+                        errdefer self.discardFrame();
 
                         try self.pushActive(init_value);
                         for (array) |value| {
                             try self.pushActive(value);
                             try self.callBlock(block);
 
-                            const stack = self.data_stacks.getLast();
-                            if (stack.items.len != 1) return EvalError.BlockLeftWrongElementCount;
+                            const frame = self.frame_stack.getLast();
+                            if (frame.items.len != 1) return EvalError.BlockLeftWrongElementCount;
                         }
 
-                        var stack = self.data_stacks.pop().?;
-                        defer stack.deinit(self.allocator);
+                        var frame = self.frame_stack.pop().?;
+                        defer frame.deinit(self.allocator);
 
-                        const result = stack.pop() orelse return EvalError.StackUnderflow;
+                        const result = frame.pop() orelse return EvalError.StackUnderflow;
                         try self.pushActive(result);
                     },
                     // binary
@@ -258,33 +257,33 @@ pub const Interpreter = struct {
                         const block = try (try self.popOrError()).isBlock();
                         const array = try (try self.popOrError()).isArray();
 
-                        try self.beginArray();
-                        errdefer self.discardStack();
+                        try self.beginFrame();
+                        errdefer self.discardFrame();
 
                         for (array, 1..) |value, i| {
                             try self.pushActive(value);
                             try self.callBlock(block);
 
-                            const stack = self.data_stacks.getLast();
-                            if (stack.items.len != i) return EvalError.BlockLeftWrongElementCount;
+                            const frame = self.frame_stack.getLast();
+                            if (frame.items.len != i) return EvalError.BlockLeftWrongElementCount;
                         }
 
-                        try self.endArray();
+                        try self.closeFrame();
                     },
                     .filter => {
                         const block = try (try self.popOrError()).isBlock();
                         const array = try (try self.popOrError()).isArray();
 
-                        try self.beginArray();
-                        errdefer self.discardStack();
+                        try self.beginFrame();
+                        errdefer self.discardFrame();
 
                         var leftover_elements_count: usize = 0;
                         for (array) |value| {
                             try self.pushActive(value);
                             try self.callBlock(block);
 
-                            const stack = self.data_stacks.getLast();
-                            if (stack.items.len != leftover_elements_count + 1) return EvalError.BlockLeftWrongElementCount;
+                            const frame = self.frame_stack.getLast();
+                            if (frame.items.len != leftover_elements_count + 1) return EvalError.BlockLeftWrongElementCount;
 
                             const boolean = try (try self.popOrError()).isBool();
                             if (boolean) {
@@ -293,22 +292,21 @@ pub const Interpreter = struct {
                             }
                         }
 
-                        try self.endArray();
+                        try self.closeFrame();
                     },
                     .each => {
                         const block = try (try self.popOrError()).isBlock();
                         const array = try (try self.popOrError()).isArray();
 
-                        // making a scratch stack
-                        try self.beginArray();
-                        defer self.discardStack();
+                        try self.beginFrame();
+                        defer self.discardFrame();
 
                         for (array) |value| {
                             try self.pushActive(value);
                             try self.callBlock(block);
 
-                            const stack = self.data_stacks.getLast();
-                            if (stack.items.len != 0) return EvalError.BlockLeftWrongElementCount;
+                            const frame = self.frame_stack.getLast();
+                            if (frame.items.len != 0) return EvalError.BlockLeftWrongElementCount;
                         }
                     },
                     // unary
@@ -354,8 +352,8 @@ pub const Interpreter = struct {
                     // no argument
                     .left_brace => self.block_level += 1,
                     .right_brace => return EvalError.UnmatchedRightBrace,
-                    .left_bracket => try self.beginArray(),
-                    .right_bracket => if (self.data_stacks.items.len > 1) try self.endArray() else return EvalError.UnmatchedRightBracket,
+                    .left_bracket => try self.beginFrame(),
+                    .right_bracket => if (self.frame_stack.items.len > 1) try self.closeFrame() else return EvalError.UnmatchedRightBracket,
                     .clear => self.getActive().clearRetainingCapacity(),
                     .stack => {
                         if (self.getActive().items.len == 0) {
@@ -551,8 +549,8 @@ pub const Interpreter = struct {
 
     pub fn gcTryCollect(self: *Interpreter) void {
         // mark stack objects
-        for (self.data_stacks.items) |stack| {
-            for (stack.items) |val| {
+        for (self.frame_stack.items) |frame| {
+            for (frame.items) |val| {
                 GC.markValue(val);
             }
         }
@@ -565,12 +563,12 @@ pub const Interpreter = struct {
         self.gc.sweepObjects();
     }
 
-    fn beginArray(self: *Interpreter) EvalError!void {
-        try self.data_stacks.append(self.allocator, .empty);
+    fn beginFrame(self: *Interpreter) EvalError!void {
+        try self.frame_stack.append(self.allocator, .empty);
     }
 
-    fn endArray(self: *Interpreter) EvalError!void {
-        var contents = self.data_stacks.pop().?;
+    fn closeFrame(self: *Interpreter) EvalError!void {
+        var contents = self.frame_stack.pop().?;
 
         const array: GcObjectValue = .{ .array = try contents.toOwnedSlice(self.allocator) };
 
@@ -579,17 +577,17 @@ pub const Interpreter = struct {
         try self.pushActive(.{ .object = obj });
     }
 
-    fn discardStack(self: *Interpreter) void {
-        var stack = self.data_stacks.pop().?;
-        stack.deinit(self.allocator);
+    fn discardFrame(self: *Interpreter) void {
+        var frame = self.frame_stack.pop().?;
+        frame.deinit(self.allocator);
     }
 
     fn pushActive(self: *Interpreter, value: Value) EvalError!void {
         try self.getActive().append(self.allocator, value);
     }
 
-    fn getActive(self: *Interpreter) *Stack {
-        return &self.data_stacks.items[self.data_stacks.items.len - 1];
+    fn getActive(self: *Interpreter) *Frame {
+        return &self.frame_stack.items[self.frame_stack.items.len - 1];
     }
 
     fn peekAtOrError(self: *Interpreter, depth: usize) EvalError!Value {
